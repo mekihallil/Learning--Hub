@@ -1259,3 +1259,147 @@ WHERE p.id > 3;
 > ⚠️ **Warning:** Aliases from `SELECT` (like `AS owner`) can't be used in `WHERE`, because `WHERE` runs first (topic 17).
 
 > 🏆 **Golden Rule:** **`WHERE` filters the final pairs. `ON` controls which pairs form.** For outer joins, decide which one you mean.
+
+
+
+## 🔺 48. Three Way Joins
+
+**What it does:** Combines **three tables** in one query by chaining two `JOIN`s, then goes a step further by joining the **same table twice** under different aliases.
+**Why it is used:** Real questions often cross several tables: "who commented on which photo, and who owns that photo?"
+**When to use it:** Any time the information you need is two or more links away.
+
+**Analogy:** Following a chain of introductions: "I met **Sam** (comment), who commented on a photo by **Priya** (photo), who is a member of the **club** (user)." Each link is one more `JOIN`.
+
+**Our tables:**
+```
+        ┌── user_id ──►  users
+comments
+        └── photo_id ─►  photos ── user_id ──► users
+```
+
+### Part 1: a standard three-way join
+**Show who wrote each comment and on which photo:**
+```sql
+SELECT u.username, p.url, c.contents
+FROM comments AS c
+JOIN users AS u ON u.id = c.user_id
+JOIN photos AS p ON p.id = c.photo_id;
+```
+**Output:**
+```
+ username  |      url       |       contents
+-----------+----------------+-----------------------
+ pferrer   | http://one.jpg | Nice shot!
+ si93onis  | http://one.jpg | Love this
+ 99stroman | http://two.jpg | Where was this taken?
+ monahan93 | http://754.jpg | Beautiful
+(4 rows)
+```
+
+**The recipe:** start from the table in the middle (`comments`, which holds both foreign keys) and add **one `JOIN ... ON` per extra table**.
+
+### Part 2: joining the same table twice
+**Question:** for each comment, who wrote it **and** who owns the photo? Both are rows in `users`, so we join `users` twice with different aliases.
+```sql
+SELECT
+  c.contents,
+  commenter.username AS commenter,
+  uploader.username AS uploader,
+  p.url
+FROM comments AS c
+JOIN users AS commenter ON commenter.id = c.user_id
+JOIN photos AS p ON p.id = c.photo_id
+JOIN users AS uploader ON uploader.id = p.user_id;
+```
+**Output:**
+```
+       contents        | commenter | uploader  |      url
+-----------------------+-----------+-----------+----------------
+ Nice shot!            | pferrer   | 99stroman | http://one.jpg
+ Love this             | si93onis  | 99stroman | http://one.jpg
+ Where was this taken? | 99stroman | monahan93 | http://two.jpg
+ Beautiful             | monahan93 | pferrer   | http://754.jpg
+(4 rows)
+```
+This is really a **four-step chain** (comments, users, photos, users), but only three **different** tables.
+
+**Why aliases are required here:** without them Postgres can't tell which `users` you mean:
+```
+ERROR:  table name "users" specified more than once
+```
+
+**Add a filter (topic 47):** comments on photos owned by `monahan93`:
+```sql
+SELECT c.contents, commenter.username AS commenter
+FROM comments AS c
+JOIN users AS commenter ON commenter.id = c.user_id
+JOIN photos AS p ON p.id = c.photo_id
+JOIN users AS uploader ON uploader.id = p.user_id
+WHERE uploader.username = 'monahan93';
+```
+**Output:**
+```
+       contents        | commenter
+-----------------------+-----------
+ Where was this taken? | 99stroman
+(1 row)
+```
+
+### Part 3: mixing outer joins (and the trap)
+**Keep every photo, even those without comments:**
+```sql
+SELECT p.url, c.contents, u.username
+FROM photos AS p
+LEFT JOIN comments AS c ON c.photo_id = p.id
+LEFT JOIN users AS u ON u.id = c.user_id;
+```
+**Output:**
+```
+       url       |       contents        |  username
+-----------------+-----------------------+-----------
+ http://one.jpg  | Nice shot!            | pferrer
+ http://one.jpg  | Love this             | si93onis
+ http://two.jpg  | Where was this taken? | 99stroman
+ http://25.jpg   |                       |
+ http://36.jpg   |                       |
+ http://754.jpg  | Beautiful             | monahan93
+ http://35.jpg   |                       |
+ http://256.jpg  |                       |
+ http://lost.jpg |                       |
+(9 rows)
+```
+**The trap: an inner join after a left join.**
+```sql
+SELECT p.url, c.contents, u.username
+FROM photos AS p
+LEFT JOIN comments AS c ON c.photo_id = p.id
+JOIN users AS u ON u.id = c.user_id;
+```
+**Output:**
+```
+      url       |       contents        | username
+----------------+-----------------------+-----------
+ http://one.jpg | Nice shot!            | pferrer
+ http://one.jpg | Love this             | si93onis
+ http://two.jpg | Where was this taken? | 99stroman
+ http://754.jpg | Beautiful             | monahan93
+(4 rows)
+```
+The photos with no comment have `c.user_id = NULL`, which finds no user, so the plain `JOIN` removes them. **Keep using `LEFT JOIN` all the way down** when you want to preserve the first table.
+
+**Build it step by step:**
+
+| Step | Action | Check |
+|---|---|---|
+| 1 | Write the first join only | Row count makes sense? |
+| 2 | Add the second `JOIN ... ON` | Count changed as expected? |
+| 3 | Add `WHERE` last | Filters the right rows? |
+| 4 | Add aliases and column names | Output readable? |
+
+> ⚠️ **Warning:** A single wrong `ON` in a chain multiplies or drops rows without an error. **Check the row count after each join.**
+
+> ⚠️ **Warning:** Use aliases from the start. In multi-table queries, ambiguous names like `id` and `username` are inevitable.
+
+> ⚠️ **Warning:** After a `LEFT JOIN`, make the following joins `LEFT` too, unless you really want to drop unmatched rows.
+
+> 🏆 **Golden Rule:** **One `JOIN` per extra table, each with its own `ON`.** Join the same table twice with different aliases when it plays two roles.
