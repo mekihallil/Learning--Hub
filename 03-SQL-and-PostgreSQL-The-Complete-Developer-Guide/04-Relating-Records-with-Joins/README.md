@@ -787,3 +787,97 @@ WHERE username <> 'pferrer' OR username IS NULL
 > ⚠️ **Warning:** After a `LEFT JOIN`, be careful filtering on **right-table columns** in `WHERE`. Add `OR column IS NULL`, or move the condition into the `ON` clause.
 
 > 🏆 **Golden Rule:** **A row is "included" only if it finds a partner, or if its table is the one the join promises to keep.** `NULL` never finds a partner, and `LEFT JOIN ... WHERE right.id IS NULL` is the standard way to find the unmatched rows.
+
+
+## 🧩 44. Four Kinds of Joins
+
+**What it does:** Names the **four joins** that decide which rows survive when two tables are combined: `INNER`, `LEFT`, `RIGHT`, and `FULL`. They differ only in what happens to rows that **find no partner**.
+**Why it is used:** Topics 37 to 43 showed each one separately. This puts them in one picture so you can pick the right one quickly.
+**When to use it:** Every time you write a join, ask: "Which unmatched rows do I want to keep?"
+
+**Analogy:** Two guest lists, one for a wedding (photos) and one for a party (users). You want the people who appear on both lists. Do you also want the people who are only on the wedding list? Only on the party list? Everyone? Each join answers a different version of that question.
+
+**The picture (A = `photos`, B = `users`):**
+```
+INNER JOIN         LEFT JOIN          RIGHT JOIN         FULL JOIN
+ A   both   B       A   both   B       A   both   B       A   both   B
+(   (####)   )     (###(####)   )     (   (####)###)     (###(####)###)
+only A  only B     keeps A + matches  keeps B + matches  keeps everything
+dropped dropped    drops only B       drops only A
+```
+
+**The rule for each:**
+
+| Join | Keeps | Unmatched `photos` rows | Unmatched `users` rows |
+|---|---|---|---|
+| `INNER JOIN` (or just `JOIN`) | Matched pairs only | ❌ Dropped | ❌ Dropped |
+| `LEFT JOIN` | Matches + all of the **left** table | ✅ Kept (`NULL` on the right) | ❌ Dropped |
+| `RIGHT JOIN` | Matches + all of the **right** table | ❌ Dropped | ✅ Kept (`NULL` on the left) |
+| `FULL JOIN` | Matches + everything from both | ✅ Kept | ✅ Kept |
+
+**Left and right** come from the **position in your query**:
+```sql
+FROM photos LEFT JOIN users ON ...
+--   ^left            ^right
+```
+
+**How many rows each returns with our data:**
+```sql
+SELECT COUNT(*)
+FROM photos
+JOIN users ON users.id = photos.user_id;
+```
+**Output:**
+```
+ count
+-------
+     7
+(1 row)
+```
+Change `JOIN` to the other types and you get:
+
+| Join type | Row count | Why |
+|---|---|---|
+| `INNER JOIN` | **7** | 7 photos have a real owner |
+| `LEFT JOIN` | **8** | 7 matches + `lost.jpg` |
+| `RIGHT JOIN` | **8** | 7 matches + `lonelyuser` |
+| `FULL JOIN` | **9** | 7 matches + `lost.jpg` + `lonelyuser` |
+
+**Full names (these are the same thing):**
+
+| Short | Long |
+|---|---|
+| `JOIN` | `INNER JOIN` |
+| `LEFT JOIN` | `LEFT OUTER JOIN` |
+| `RIGHT JOIN` | `RIGHT OUTER JOIN` |
+| `FULL JOIN` | `FULL OUTER JOIN` |
+
+`LEFT`, `RIGHT`, and `FULL` are called **outer joins**.
+
+**Choosing a join:**
+
+| You want... | Use |
+|---|---|
+| Only rows that have a partner | `INNER JOIN` |
+| Every row from table A, plus A's partners if any | `LEFT JOIN` |
+| Every row from table B, plus B's partners if any | `RIGHT JOIN` |
+| Every row from both, matched where possible | `FULL JOIN` |
+
+**There is a fifth join, `CROSS JOIN`**, which pairs **every row with every row** and has no `ON`. It's rarely what you want here:
+```sql
+SELECT COUNT(*) FROM photos CROSS JOIN users;
+```
+**Output:**
+```
+ count
+-------
+    40
+(1 row)
+```
+That's 8 photos x 5 users.
+
+> ⚠️ **Warning:** `INNER JOIN` is the default, and it **silently drops** unmatched rows. If a count looks too small, check whether you needed an outer join.
+
+> ⚠️ **Warning:** In practice `RIGHT JOIN` is rare. Most people swap the table order and use `LEFT JOIN` instead, because it reads more naturally (topic 46).
+
+> 🏆 **Golden Rule:** **The four joins differ only in which unmatched rows survive.** `INNER` keeps none, `LEFT` keeps the left's, `RIGHT` keeps the right's, and `FULL` keeps both.
