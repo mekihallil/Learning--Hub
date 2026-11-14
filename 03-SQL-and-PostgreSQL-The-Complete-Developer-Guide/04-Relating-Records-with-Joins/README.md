@@ -881,3 +881,147 @@ That's 8 photos x 5 users.
 > ⚠️ **Warning:** In practice `RIGHT JOIN` is rare. Most people swap the table order and use `LEFT JOIN` instead, because it reads more naturally (topic 46).
 
 > 🏆 **Golden Rule:** **The four joins differ only in which unmatched rows survive.** `INNER` keeps none, `LEFT` keeps the left's, `RIGHT` keeps the right's, and `FULL` keeps both.
+
+
+
+## 🛠️ 45. Each Join in Practice
+
+**What it does:** Runs **the same query four times**, changing only the join keyword, so you can see exactly which rows appear and where the `NULL`s show up.
+**Why it is used:** The `NULL`s are a diagnostic tool. A `NULL` on one side tells you exactly which side had no partner.
+**When to use it:** Whenever you're deciding between join types, or checking why a join returned what it did.
+
+**Analogy:** Four security cameras pointed at the same door. Each one records the same people entering, but they differ in whether they also record people who stand outside without a ticket.
+
+**The query pattern:** we show both ids so the `NULL`s are easy to spot.
+```sql
+SELECT p.id AS photo_id, p.url, u.id AS user_id, u.username
+FROM photos AS p
+<JOIN TYPE> users AS u ON u.id = p.user_id;
+```
+
+### INNER JOIN
+```sql
+SELECT p.id AS photo_id, p.url, u.id AS user_id, u.username
+FROM photos AS p
+INNER JOIN users AS u ON u.id = p.user_id;
+```
+**Output:**
+```
+ photo_id |      url       | user_id | username
+----------+----------------+---------+-----------
+        1 | http://one.jpg |       4 | 99stroman
+        2 | http://two.jpg |       1 | monahan93
+        3 | http://25.jpg  |       1 | monahan93
+        4 | http://36.jpg  |       1 | monahan93
+        5 | http://754.jpg |       2 | pferrer
+        6 | http://35.jpg  |       3 | si93onis
+        7 | http://256.jpg |       4 | 99stroman
+(7 rows)
+```
+No blanks anywhere: every row has both a photo and a user.
+
+### LEFT JOIN
+```sql
+SELECT p.id AS photo_id, p.url, u.id AS user_id, u.username
+FROM photos AS p
+LEFT JOIN users AS u ON u.id = p.user_id;
+```
+**Output:**
+```
+ photo_id |       url       | user_id | username
+----------+-----------------+---------+-----------
+        1 | http://one.jpg  |       4 | 99stroman
+        2 | http://two.jpg  |       1 | monahan93
+        3 | http://25.jpg   |       1 | monahan93
+        4 | http://36.jpg   |       1 | monahan93
+        5 | http://754.jpg  |       2 | pferrer
+        6 | http://35.jpg   |       3 | si93onis
+        7 | http://256.jpg  |       4 | 99stroman
+        8 | http://lost.jpg |         |
+(8 rows)
+```
+Blanks appear in the **right** table's columns (`user_id`, `username`). Photo 8 has no owner.
+
+### RIGHT JOIN
+```sql
+SELECT p.id AS photo_id, p.url, u.id AS user_id, u.username
+FROM photos AS p
+RIGHT JOIN users AS u ON u.id = p.user_id;
+```
+**Output:**
+```
+ photo_id |      url       | user_id |  username
+----------+----------------+---------+------------
+        1 | http://one.jpg |       4 | 99stroman
+        2 | http://two.jpg |       1 | monahan93
+        3 | http://25.jpg  |       1 | monahan93
+        4 | http://36.jpg  |       1 | monahan93
+        5 | http://754.jpg |       2 | pferrer
+        6 | http://35.jpg  |       3 | si93onis
+        7 | http://256.jpg |       4 | 99stroman
+          |                |       5 | lonelyuser
+(8 rows)
+```
+Blanks appear in the **left** table's columns (`photo_id`, `url`). User 5 has no photos.
+
+### FULL JOIN
+```sql
+SELECT p.id AS photo_id, p.url, u.id AS user_id, u.username
+FROM photos AS p
+FULL JOIN users AS u ON u.id = p.user_id;
+```
+**Output:**
+```
+ photo_id |       url       | user_id |  username
+----------+-----------------+---------+------------
+        1 | http://one.jpg  |       4 | 99stroman
+        2 | http://two.jpg  |       1 | monahan93
+        3 | http://25.jpg   |       1 | monahan93
+        4 | http://36.jpg   |       1 | monahan93
+        5 | http://754.jpg  |       2 | pferrer
+        6 | http://35.jpg   |       3 | si93onis
+        7 | http://256.jpg  |       4 | 99stroman
+        8 | http://lost.jpg |         |
+          |                 |       5 | lonelyuser
+(9 rows)
+```
+Blanks can appear on **either** side.
+
+**Reading the blanks:**
+
+| What you see | What it means |
+|---|---|
+| Blank `user_id` / `username` | A photo with **no owner** |
+| Blank `photo_id` / `url` | A user with **no photos** |
+| No blanks | Every row matched |
+
+**Practice patterns: find only the unmatched rows** by filtering on the `NULL`:
+
+| Goal | Query ends with | Result |
+|---|---|---|
+| Photos with no owner | `p LEFT JOIN users u ON ... WHERE u.id IS NULL` | `lost.jpg` |
+| Users with no photos | `p RIGHT JOIN users u ON ... WHERE p.id IS NULL` | `lonelyuser` |
+| Both kinds at once | `p FULL JOIN users u ON ... WHERE p.id IS NULL OR u.id IS NULL` | `lost.jpg` and `lonelyuser` |
+
+**Example of the third one:**
+```sql
+SELECT p.url, u.username
+FROM photos AS p
+FULL JOIN users AS u ON u.id = p.user_id
+WHERE p.id IS NULL OR u.id IS NULL;
+```
+**Output:**
+```
+       url       |  username
+-----------------+------------
+ http://lost.jpg |
+                 | lonelyuser
+(2 rows)
+```
+Always test the `NULL` on the **primary key** (`p.id`, `u.id`), because a primary key is never `NULL` in a real row.
+
+> ⚠️ **Warning:** Test for missing partners with `IS NULL`, never `= NULL` (topic 11).
+
+> ⚠️ **Warning:** Test the `NULL` on a column that **can't be `NULL` normally**, such as the primary key. Testing a column that is sometimes `NULL` in real data gives misleading results.
+
+> 🏆 **Golden Rule:** **Read the blanks.** Blanks on the right mean the left row had no partner, and blanks on the left mean the right row had none.
