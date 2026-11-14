@@ -1136,3 +1136,126 @@ LEFT JOIN extra_table ON ...
 > ⚠️ **Warning:** With several tables, a `LEFT JOIN` followed by an `INNER JOIN` can drop the rows the `LEFT JOIN` kept (topic 48).
 
 > 🏆 **Golden Rule:** **For `INNER` and `FULL` joins, order is cosmetic. For `LEFT` and `RIGHT` joins, order decides which table is kept.** When in doubt, write `LEFT JOIN` and put the "keep everything" table first.
+
+
+
+## 🎯 47. Where with Join
+
+**What it does:** Shows how to filter joined rows with `WHERE`, and the difference between filtering in `WHERE` and filtering in the join's `ON`.
+**Why it is used:** After a join, each row holds columns from **both** tables, so `WHERE` can test either side. The location of the filter also changes the result of outer joins.
+**When to use it:** Any time you need only some of the joined rows.
+
+**Analogy:** First you **pair up** the two lists (the join). Then you **cross off** the pairs you don't want (the `WHERE`). Crossing off happens **after** pairing.
+
+**The order Postgres works in:**
+
+| Step | Clause | What happens |
+|---|---|---|
+| 1 | `FROM` | Start with the first table |
+| 2 | `JOIN ... ON` | Pair up rows from the other table |
+| 3 | `WHERE` | Keep only the pairs that pass |
+| 4 | `SELECT` | Pick the columns to show |
+
+**Filter on a column from one table:**
+```sql
+SELECT url, username
+FROM photos
+JOIN users ON users.id = photos.user_id
+WHERE username = 'monahan93';
+```
+**Output:**
+```
+      url       | username
+----------------+-----------
+ http://two.jpg | monahan93
+ http://25.jpg  | monahan93
+ http://36.jpg  | monahan93
+(3 rows)
+```
+
+**Filter on columns from both tables:**
+```sql
+SELECT p.url, u.username
+FROM photos AS p
+JOIN users AS u ON u.id = p.user_id
+WHERE u.username = 'monahan93' AND p.id > 2;
+```
+**Output:**
+```
+      url      | username
+---------------+-----------
+ http://25.jpg | monahan93
+ http://36.jpg | monahan93
+(2 rows)
+```
+
+**Use the tools from earlier topics (`IN`, `OR`):**
+```sql
+SELECT p.url, u.username
+FROM photos AS p
+JOIN users AS u ON u.id = p.user_id
+WHERE u.username IN ('pferrer', 'si93onis');
+```
+**Output:**
+```
+      url       | username
+----------------+----------
+ http://754.jpg | pferrer
+ http://35.jpg  | si93onis
+(2 rows)
+```
+
+**The important difference for outer joins: `ON` vs `WHERE`.**
+
+**Condition in `ON`:** it limits which rows **may match**, and the left table's rows are still kept.
+```sql
+SELECT u.username, p.url
+FROM users AS u
+LEFT JOIN photos AS p ON p.user_id = u.id AND p.id > 3;
+```
+**Output:**
+```
+  username  |      url
+------------+----------------
+ monahan93  | http://36.jpg
+ pferrer    | http://754.jpg
+ si93onis   | http://35.jpg
+ 99stroman  | http://256.jpg
+ lonelyuser |
+(5 rows)
+```
+Every user is still listed, including `lonelyuser`.
+
+**Condition in `WHERE`:** it removes rows **after** the join, including the `NULL` ones.
+```sql
+SELECT u.username, p.url
+FROM users AS u
+LEFT JOIN photos AS p ON p.user_id = u.id
+WHERE p.id > 3;
+```
+**Output:**
+```
+ username  |      url
+-----------+----------------
+ monahan93 | http://36.jpg
+ pferrer   | http://754.jpg
+ si93onis  | http://35.jpg
+ 99stroman | http://256.jpg
+(4 rows)
+```
+`lonelyuser` vanished, because `NULL > 3` is unknown, not true.
+
+| | Filter in `ON` | Filter in `WHERE` |
+|---|---|---|
+| **Runs** | While matching | After matching |
+| **Unmatched left rows** | ✅ Kept | ❌ Removed if the test fails on `NULL` |
+| **Use for an inner join** | Same result as `WHERE` | Same result as `ON` |
+| **Use for a left join** | "Which partners are allowed" | "Which final rows survive" |
+
+> ⚠️ **Warning:** **For `INNER JOIN`, `ON` and `WHERE` give identical results.** The difference only shows up with outer joins.
+
+> ⚠️ **Warning:** A `WHERE` on a **right-table column** after a `LEFT JOIN` can quietly turn it into an inner join (topic 43).
+
+> ⚠️ **Warning:** Aliases from `SELECT` (like `AS owner`) can't be used in `WHERE`, because `WHERE` runs first (topic 17).
+
+> 🏆 **Golden Rule:** **`WHERE` filters the final pairs. `ON` controls which pairs form.** For outer joins, decide which one you mean.
