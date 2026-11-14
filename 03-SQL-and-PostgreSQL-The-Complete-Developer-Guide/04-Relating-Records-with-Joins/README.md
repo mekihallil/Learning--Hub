@@ -1025,3 +1025,114 @@ Always test the `NULL` on the **primary key** (`p.id`, `u.id`), because a primar
 > ⚠️ **Warning:** Test the `NULL` on a column that **can't be `NULL` normally**, such as the primary key. Testing a column that is sometimes `NULL` in real data gives misleading results.
 
 > 🏆 **Golden Rule:** **Read the blanks.** Blanks on the right mean the left row had no partner, and blanks on the left mean the right row had none.
+
+
+
+## 🔀 46. Does Order Matter
+
+**What it does:** Answers a common question: if you swap the order of the tables in a join, does the result change? **It depends on the join type.**
+**Why it is used:** Knowing when order matters prevents silent bugs, especially with `LEFT` and `RIGHT` joins.
+**When to use it:** Whenever you write or rewrite a join, or copy a query and reorder its tables.
+
+**Analogy:** Shaking hands is the same from either side (order doesn't matter). Saying "I'll keep everyone from **my** guest list" depends entirely on **whose** list it is (order matters).
+
+**Summary:**
+
+| Join | Does swapping the tables change the rows? |
+|---|---|
+| `INNER JOIN` | ❌ **No**, the same pairs come back |
+| `FULL JOIN` | ❌ **No**, the same rows come back |
+| `LEFT JOIN` | ✅ **Yes**, a different table is now being kept |
+| `RIGHT JOIN` | ✅ **Yes**, for the same reason |
+
+**Inner join: order doesn't matter.**
+```sql
+SELECT COUNT(*) FROM photos JOIN users ON users.id = photos.user_id;
+SELECT COUNT(*) FROM users JOIN photos ON photos.user_id = users.id;
+```
+**Output (both):**
+```
+ count
+-------
+     7
+(1 row)
+```
+
+**Left join: order **does** matter.**
+
+**Version A: keep every photo**
+```sql
+SELECT username, url
+FROM photos
+LEFT JOIN users ON users.id = photos.user_id;
+```
+**Output:**
+```
+ username  |       url
+-----------+-----------------
+ 99stroman | http://one.jpg
+ monahan93 | http://two.jpg
+ monahan93 | http://25.jpg
+ monahan93 | http://36.jpg
+ pferrer   | http://754.jpg
+ si93onis  | http://35.jpg
+ 99stroman | http://256.jpg
+           | http://lost.jpg
+(8 rows)
+```
+
+**Version B: keep every user (the tables swapped)**
+```sql
+SELECT username, url
+FROM users
+LEFT JOIN photos ON photos.user_id = users.id;
+```
+**Output:**
+```
+  username  |      url
+------------+----------------
+ monahan93  | http://two.jpg
+ monahan93  | http://25.jpg
+ monahan93  | http://36.jpg
+ pferrer    | http://754.jpg
+ si93onis   | http://35.jpg
+ 99stroman  | http://one.jpg
+ 99stroman  | http://256.jpg
+ lonelyuser |
+(8 rows)
+```
+Both have 8 rows, but **different** ones. Version A has `lost.jpg` and no `lonelyuser`. Version B has `lonelyuser` and no `lost.jpg`.
+
+**The equivalence:** a `LEFT JOIN` with the tables swapped is a `RIGHT JOIN`.
+```sql
+-- These two return the same rows
+FROM photos LEFT JOIN users ON users.id = photos.user_id
+FROM users RIGHT JOIN photos ON users.id = photos.user_id
+```
+Both keep **all photos**.
+
+**What order still affects, even when the rows are the same:**
+
+| Thing | Effect of swapping the tables |
+|---|---|
+| Column order in `SELECT *` | The first table's columns appear first |
+| Which table `LEFT`/`RIGHT` refers to | The meaning flips |
+| Row order in the output | May change (it was never guaranteed) |
+
+**What order never affects:** the two sides of the `ON` test.
+```sql
+ON users.id = photos.user_id
+ON photos.user_id = users.id   -- identical
+```
+
+**A reading habit that avoids confusion:** put the table you want to **keep everything from** first, and use `LEFT JOIN`:
+```sql
+FROM main_table
+LEFT JOIN extra_table ON ...
+```
+
+> ⚠️ **Warning:** Copying a `LEFT JOIN` and swapping the tables **without** changing the keyword quietly changes which rows are kept.
+
+> ⚠️ **Warning:** With several tables, a `LEFT JOIN` followed by an `INNER JOIN` can drop the rows the `LEFT JOIN` kept (topic 48).
+
+> 🏆 **Golden Rule:** **For `INNER` and `FULL` joins, order is cosmetic. For `LEFT` and `RIGHT` joins, order decides which table is kept.** When in doubt, write `LEFT JOIN` and put the "keep everything" table first.
