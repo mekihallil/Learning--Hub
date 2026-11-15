@@ -797,3 +797,91 @@ GROUP BY owner.id;
 > ⚠️ **Warning:** Grouping by a non-unique column (like `username`) can silently merge different people.
 
 > 🏆 **Golden Rule:** **Join first, group second.** Get the joined rows right, then collapse them with `GROUP BY` and an aggregate.
+
+
+
+## 🚪 56. Filtering Groups with Having
+
+**What it does:** `HAVING` filters **whole groups** after they've been formed and summarized. `WHERE` filters **individual rows** before grouping.
+**Why it is used:** You can't use an aggregate inside `WHERE` (topic 51). To ask "which users have **more than 1 photo**?" you need a filter that can see the finished counts.
+**When to use it:** Any time the condition depends on an aggregate: "more than 3," "total over 1000," "average under 5."
+
+**Analogy:** A restaurant. The **host at the door** (`WHERE`) decides which **individual people** may come in. After everyone is seated at tables (`GROUP BY`), the **manager** (`HAVING`) closes any **table** with fewer than 2 guests.
+
+**Users with more than 1 photo:**
+```sql
+SELECT user_id, COUNT(*) AS photo_count
+FROM photos
+GROUP BY user_id
+HAVING COUNT(*) > 1;
+```
+**Output:**
+```
+ user_id | photo_count
+---------+-------------
+       1 |           3
+       4 |           2
+(2 rows)
+```
+The groups with a count of 1 (users 2 and 3, and the `NULL` group) were removed.
+
+**Why `WHERE` can't do this:**
+```sql
+SELECT user_id, COUNT(*)
+FROM photos
+WHERE COUNT(*) > 1
+GROUP BY user_id;
+```
+**Output:**
+```
+ERROR:  aggregate functions are not allowed in WHERE
+LINE 3: WHERE COUNT(*) > 1
+```
+When `WHERE` runs, **no groups exist yet**, so there's nothing to count.
+
+**The order Postgres works in:**
+
+| Step | Clause | What happens |
+|---|---|---|
+| 1 | `FROM` / `JOIN` | Build the rows |
+| 2 | `WHERE` | Remove **individual rows** |
+| 3 | `GROUP BY` | Sort the remaining rows into buckets |
+| 4 | Aggregates | Calculate each bucket's `COUNT`, `SUM`, and so on |
+| 5 | `HAVING` | Remove **whole buckets** |
+| 6 | `SELECT` | Choose the columns to show |
+
+The order you **write** them is `SELECT`, `FROM`, `WHERE`, `GROUP BY`, `HAVING`.
+
+**`WHERE` vs `HAVING`:**
+
+| | `WHERE` | `HAVING` |
+|---|---|---|
+| **Filters** | Individual **rows** | Whole **groups** |
+| **Runs** | **Before** grouping | **After** grouping |
+| **Can use aggregates?** | ❌ No | ✅ Yes |
+| **Can use plain columns?** | ✅ Yes | Only grouped columns |
+| **Example** | `WHERE user_id IS NOT NULL` | `HAVING COUNT(*) > 1` |
+
+**Using both together:**
+```sql
+SELECT user_id, COUNT(*) AS photo_count
+FROM photos
+WHERE user_id IS NOT NULL
+GROUP BY user_id
+HAVING COUNT(*) > 1;
+```
+**Output:**
+```
+ user_id | photo_count
+---------+-------------
+       1 |           3
+       4 |           2
+(2 rows)
+```
+`WHERE` first removed the orphan photo (a row), then `HAVING` removed the small groups.
+
+> ⚠️ **Warning:** `HAVING` without a working `GROUP BY` mindset is confusing. Think: **group first, then filter the groups**.
+
+> ⚠️ **Warning:** A **row** condition belongs in `WHERE`, not `HAVING`. It's faster to throw rows away **before** grouping.
+
+> 🏆 **Golden Rule:** **`WHERE` filters rows, `HAVING` filters groups.** If your condition contains an aggregate, it must go in `HAVING`.
