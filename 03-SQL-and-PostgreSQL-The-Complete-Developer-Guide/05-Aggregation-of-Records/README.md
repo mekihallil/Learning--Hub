@@ -426,3 +426,104 @@ GROUP BY <grouping column>;
 > ⚠️ **Warning:** A name or label may not be unique. Grouping by `username` would merge two users who share the same name. Group by an id when uniqueness matters (topic 55).
 
 > 🏆 **Golden Rule:** **`SELECT` the grouping column plus aggregates, and `GROUP BY` the grouping column.** Those two lists should line up.
+
+
+## ⚠️ 53. A Gotcha with Count
+
+**What it does:** Explains that `COUNT(*)` and `COUNT(column)` can give **different answers**, and shows the classic bug it causes with `LEFT JOIN` and `GROUP BY`.
+**Why it is used:** The bug is silent. The query runs, the numbers look reasonable, and a user who has **zero** photos is reported as having **one**.
+**When to use it:** Any time you count rows from the "many" side of an outer join.
+
+**Analogy:** A teacher counting "how many students handed in homework." `COUNT(*)` counts **every name on the roster**. `COUNT(homework)` counts only the names with **an actual paper**. Different questions, different answers.
+
+**The three counts:**
+
+| Expression | Counts | Skips `NULL`? |
+|---|---|---|
+| `COUNT(*)` | Every **row** | No |
+| `COUNT(column)` | Rows where the column is **not `NULL`** | ✅ Yes |
+| `COUNT(DISTINCT column)` | **Different** non-`NULL` values | ✅ Yes |
+
+**Seeing the difference on `photos`:**
+```sql
+SELECT
+  COUNT(*) AS all_rows,
+  COUNT(user_id) AS with_owner,
+  COUNT(DISTINCT user_id) AS different_owners
+FROM photos;
+```
+**Output:**
+```
+ all_rows | with_owner | different_owners
+----------+------------+------------------
+        8 |          7 |                4
+(1 row)
+```
+8 rows, but only 7 have an owner (`lost.jpg` doesn't), and those 7 belong to 4 different users.
+
+### The bug: counting after a LEFT JOIN
+**Goal:** how many photos does **each user** have, including users with none?
+```sql
+SELECT u.username, COUNT(*) AS photo_count
+FROM users AS u
+LEFT JOIN photos AS p ON p.user_id = u.id
+GROUP BY u.username;
+```
+**Output (wrong!):**
+```
+  username  | photo_count
+------------+-------------
+ monahan93  |           3
+ pferrer    |           1
+ si93onis   |           1
+ 99stroman  |           2
+ lonelyuser |           1
+(5 rows)
+```
+`lonelyuser` has **no** photos, yet shows `1`.
+
+**Why:** a `LEFT JOIN` keeps `lonelyuser` as a row with **`NULL`** in every photo column (topic 42). `COUNT(*)` counts that row.
+
+**The fix: count a column from the other table.**
+```sql
+SELECT u.username, COUNT(p.id) AS photo_count
+FROM users AS u
+LEFT JOIN photos AS p ON p.user_id = u.id
+GROUP BY u.username;
+```
+**Output (correct):**
+```
+  username  | photo_count
+------------+-------------
+ monahan93  |           3
+ pferrer    |           1
+ si93onis   |           1
+ 99stroman  |           2
+ lonelyuser |           0
+(5 rows)
+```
+`p.id` is `NULL` for the unmatched row, so `COUNT(p.id)` skips it and returns `0`.
+
+**What each version counts for `lonelyuser`:**
+
+| Expression | Their joined row | Result |
+|---|---|---|
+| `COUNT(*)` | `(5, 'lonelyuser', NULL, NULL, NULL)` is still a row | **1** ❌ |
+| `COUNT(p.id)` | `p.id` is `NULL`, skipped | **0** ✅ |
+
+**Also remember: an `INNER JOIN` would drop `lonelyuser` completely**, so they'd be missing from the results rather than showing `0`.
+
+**Which count to choose:**
+
+| You want... | Use |
+|---|---|
+| The number of rows in a table or group | `COUNT(*)` |
+| The number of rows that **have a value** in a column | `COUNT(column)` |
+| After a `LEFT JOIN`, the number of **matches** | `COUNT(right_table.primary_key)` |
+| How many **different** values | `COUNT(DISTINCT column)` |
+
+> ⚠️ **Warning:** **After a `LEFT JOIN`, `COUNT(*)` counts the unmatched row too.** Count the other table's primary key instead.
+
+> ⚠️ **Warning:** Count a column that is **never `NULL` in a real row**, such as the primary key. Counting a column that is sometimes `NULL` gives a misleading answer.
+
+> 🏆 **Golden Rule:** **`COUNT(*)` counts rows. `COUNT(column)` counts values.** When a `LEFT JOIN` is involved, `COUNT(other_table.id)` is the safe choice.
