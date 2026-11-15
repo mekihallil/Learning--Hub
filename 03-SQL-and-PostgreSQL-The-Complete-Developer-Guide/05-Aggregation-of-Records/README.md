@@ -527,3 +527,147 @@ GROUP BY u.username;
 > ⚠️ **Warning:** Count a column that is **never `NULL` in a real row**, such as the primary key. Counting a column that is sometimes `NULL` gives a misleading answer.
 
 > 🏆 **Golden Rule:** **`COUNT(*)` counts rows. `COUNT(column)` counts values.** When a `LEFT JOIN` is involved, `COUNT(other_table.id)` is the safe choice.
+
+
+## 🧺 54. Visualizing More Grouping
+
+**What it does:** Looks at grouping more closely. You'll see what happens with **different grouping columns** and with **more than one grouping column**, using the `comments` table.
+**Why it is used:** Changing what you group by changes the question you're answering. Picturing the buckets tells you which grouping to pick.
+**When to use it:** Whenever you need a different "angle" on the same table, such as per photo, per user, or per combination.
+
+**Analogy:** The same pile of receipts can be sorted **by store**, **by month**, or **by store and month together**. Each way of sorting answers a different question.
+
+**First, add more comments so the groups have something to show:**
+```sql
+INSERT INTO comments (contents, user_id, photo_id)
+VALUES
+  ('Great colors', 2, 2),
+  ('Amazing', 3, 2),
+  ('Wow', 4, 5),
+  ('So cool', 2, 5),
+  ('Lovely', 2, 3),
+  ('Seen it twice', 2, 2);
+```
+**Output:**
+```
+INSERT 0 6
+```
+**The data for topics 54 to 58:**
+```sql
+SELECT * FROM comments;
+```
+**Output:**
+```
+ id |       contents        | user_id | photo_id
+----+-----------------------+---------+----------
+  1 | Nice shot!            |       2 |        1
+  2 | Love this             |       3 |        1
+  3 | Where was this taken? |       4 |        2
+  4 | Beautiful             |       1 |        5
+  5 | Great colors          |       2 |        2
+  6 | Amazing               |       3 |        2
+  7 | Wow                   |       4 |        5
+  8 | So cool               |       2 |        5
+  9 | Lovely                |       2 |        3
+ 10 | Seen it twice         |       2 |        2
+(10 rows)
+```
+
+### Grouping by one column: `photo_id`
+```
+Bucket photo 1: comments 1, 2             → 2
+Bucket photo 2: comments 3, 5, 6, 10      → 4
+Bucket photo 3: comment 9                 → 1
+Bucket photo 5: comments 4, 7, 8          → 3
+```
+```sql
+SELECT photo_id, COUNT(*) AS comment_count
+FROM comments
+GROUP BY photo_id;
+```
+**Output (row order may differ):**
+```
+ photo_id | comment_count
+----------+---------------
+        1 |             2
+        2 |             4
+        3 |             1
+        5 |             3
+(4 rows)
+```
+Photos 4, 6, 7, and 8 have no comments, so they have **no bucket** at all.
+
+### Grouping by a different column: `user_id`
+```sql
+SELECT user_id, COUNT(*) AS comments_written
+FROM comments
+GROUP BY user_id;
+```
+**Output:**
+```
+ user_id | comments_written
+---------+------------------
+       1 |                1
+       2 |                5
+       3 |                2
+       4 |                2
+(4 rows)
+```
+Same table, but a different question: **who** comments, not **what** gets commented on.
+
+### Grouping by two columns
+A bucket is now a **unique combination** of both values.
+```sql
+SELECT photo_id, user_id, COUNT(*) AS comment_count
+FROM comments
+GROUP BY photo_id, user_id;
+```
+**Output (row order may differ):**
+```
+ photo_id | user_id | comment_count
+----------+---------+---------------
+        1 |       2 |             1
+        1 |       3 |             1
+        2 |       2 |             2
+        2 |       3 |             1
+        2 |       4 |             1
+        3 |       2 |             1
+        5 |       1 |             1
+        5 |       2 |             1
+        5 |       4 |             1
+(9 rows)
+```
+The row `(photo 2, user 2)` has a count of **2**. That user commented twice on photo 2 (comments 5 and 10).
+
+**More columns means smaller buckets:**
+
+| Grouped by | Number of groups | What each group means |
+|---|---|---|
+| `photo_id` | 4 | All comments on one photo |
+| `user_id` | 4 | All comments by one user |
+| `photo_id, user_id` | 9 | All comments by one user **on one photo** |
+
+**You can group by a calculation too:**
+```sql
+SELECT manufacturer, price > 250 AS above_250, COUNT(*) AS phones
+FROM phones
+GROUP BY manufacturer, price > 250;
+```
+**Output:**
+```
+ manufacturer | above_250 | phones
+--------------+-----------+--------
+ Nokia        | f         |      1
+ Apple        | t         |      1
+ Samsung      | t         |      1
+ Samsung      | f         |      1
+(4 rows)
+```
+
+**Reminder of the rule (topic 50):** everything in `SELECT` must be in `GROUP BY` or inside an aggregate. With two grouping columns, **both** are allowed in `SELECT`.
+
+> ⚠️ **Warning:** Adding a grouping column can **quietly change the meaning** of your query. If a count looks too small, check whether you grouped by too many columns.
+
+> ⚠️ **Warning:** The inserted comments change your data. Rerun the reset script from topic 36 if you want the original 4 comments back.
+
+> 🏆 **Golden Rule:** **Each grouping column makes buckets more specific.** Group by exactly the columns that define the question you're asking.
