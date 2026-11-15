@@ -885,3 +885,123 @@ HAVING COUNT(*) > 1;
 > ⚠️ **Warning:** A **row** condition belongs in `WHERE`, not `HAVING`. It's faster to throw rows away **before** grouping.
 
 > 🏆 **Golden Rule:** **`WHERE` filters rows, `HAVING` filters groups.** If your condition contains an aggregate, it must go in `HAVING`.
+
+
+## 🎬 57. Having In Action
+
+**What it does:** Practical examples of `HAVING` with `COUNT`, `SUM`, and joins, plus the most common error.
+**Why it is used:** Seeing the filter applied to real numbers shows exactly which groups survive.
+**When to use it:** As templates for your own "groups that meet a condition" queries.
+
+**Analogy:** A leaderboard cutoff. Everyone's score is totaled first, **then** you keep only the teams above the line.
+
+### Example 1: photos with at least 3 comments
+```sql
+SELECT photo_id, COUNT(*) AS comment_count
+FROM comments
+GROUP BY photo_id
+HAVING COUNT(*) >= 3;
+```
+**Output (row order may differ):**
+```
+ photo_id | comment_count
+----------+---------------
+        2 |             4
+        5 |             3
+(2 rows)
+```
+Photos 1 (2 comments) and 3 (1 comment) were removed.
+
+### Example 2: manufacturers with more than 5,000 units sold
+```sql
+SELECT manufacturer, SUM(units_sold) AS total_units
+FROM phones
+GROUP BY manufacturer
+HAVING SUM(units_sold) > 5000;
+```
+**Output:**
+```
+ manufacturer | total_units
+--------------+-------------
+ Apple        |        9436
+(1 row)
+```
+Samsung (4744) and Nokia (1925) fall below the line.
+
+### Example 3: `WHERE` and `HAVING` together
+**Count only comments written by users 1 to 3, then keep photos with at least 2 of them:**
+```sql
+SELECT photo_id, COUNT(*) AS comment_count
+FROM comments
+WHERE user_id <= 3
+GROUP BY photo_id
+HAVING COUNT(*) >= 2;
+```
+**Output:**
+```
+ photo_id | comment_count
+----------+---------------
+        1 |             2
+        2 |             3
+        5 |             2
+(3 rows)
+```
+
+**Walking through it:**
+
+| Step | Result |
+|---|---|
+| `WHERE user_id <= 3` | Drops comments 3 and 7 (written by user 4), leaving 8 comments |
+| `GROUP BY photo_id` | Photo 1: 2, photo 2: 3, photo 3: 1, photo 5: 2 |
+| `HAVING COUNT(*) >= 2` | Drops photo 3 (only 1) |
+
+Notice photo 2's count is **3**, not 4, because `WHERE` removed one of its comments **before** grouping.
+
+### Example 4: with a join
+**Users who have written more than 2 comments:**
+```sql
+SELECT u.username, COUNT(*) AS comments_written
+FROM comments AS c
+JOIN users AS u ON u.id = c.user_id
+GROUP BY u.username
+HAVING COUNT(*) > 2;
+```
+**Output:**
+```
+ username | comments_written
+----------+------------------
+ pferrer  |                5
+(1 row)
+```
+
+### The common error: using an alias in `HAVING`
+```sql
+SELECT photo_id, COUNT(*) AS comment_count
+FROM comments
+GROUP BY photo_id
+HAVING comment_count > 2;
+```
+**Output:**
+```
+ERROR:  column "comment_count" does not exist
+LINE 4: HAVING comment_count > 2;
+```
+PostgreSQL doesn't allow `SELECT` aliases in `HAVING`, because `SELECT` runs **after** it (topic 56). Repeat the aggregate instead:
+```sql
+HAVING COUNT(*) > 2
+```
+
+**Templates to reuse:**
+
+| Question | `HAVING` clause |
+|---|---|
+| Groups with more than N rows | `HAVING COUNT(*) > N` |
+| Groups with a total over N | `HAVING SUM(column) > N` |
+| Groups with an average under N | `HAVING AVG(column) < N` |
+| Groups whose maximum is at least N | `HAVING MAX(column) >= N` |
+
+> ⚠️ **Warning:** `HAVING` can't use a `SELECT` alias. **Repeat the aggregate expression**.
+
+> ⚠️ **Warning:** Rows removed by `WHERE` change the group totals (Example 3). Decide whether you want to filter rows **before** counting or groups **after** counting.
+
+> 🏆 **Golden Rule:** **Group, aggregate, then filter.** Write the query without `HAVING` first, look at the numbers, then add the cutoff.
