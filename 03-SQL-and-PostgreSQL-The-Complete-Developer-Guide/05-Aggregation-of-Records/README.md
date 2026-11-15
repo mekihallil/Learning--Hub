@@ -162,3 +162,165 @@ Bucket 1 holds **three** different URLs. Postgres can't squeeze three values int
 > ⚠️ **Warning:** The error message mentions "the GROUP BY clause or an aggregate function" because those are the **only two** ways to show a column.
 
 > 🏆 **Golden Rule:** **`GROUP BY` turns each bucket into one row.** If a column can have several values inside a bucket, you must summarize it with an aggregate or leave it out.
+
+
+
+## 🧮 51. Aggregate Functions
+
+**What it does:** Aggregate functions take **many values** and return **one**: `COUNT`, `SUM`, `AVG`, `MIN`, and `MAX`.
+**Why it is used:** They are the "summary" half of grouping (topic 52). On their own they summarize the **whole table**.
+**When to use it:** Totals, averages, counts, and "biggest or smallest" questions.
+
+**Analogy:** The bottom line of a receipt. Many item lines go in, and a **total** comes out.
+
+**The five functions:**
+
+| Function | Returns | Ignores `NULL`? |
+|---|---|---|
+| `COUNT(*)` | Number of **rows** | No, counts every row |
+| `COUNT(column)` | Number of **non-NULL** values | ✅ Yes |
+| `SUM(column)` | Total | ✅ Yes |
+| `AVG(column)` | Average | ✅ Yes |
+| `MIN(column)` | Smallest value | ✅ Yes |
+| `MAX(column)` | Largest value | ✅ Yes |
+
+**Recreate the `phones` table so your numbers match** (it's fine to run this inside `photo_app`):
+```sql
+DROP TABLE IF EXISTS phones;
+
+CREATE TABLE phones (
+  name VARCHAR(50),
+  manufacturer VARCHAR(50),
+  price INTEGER,
+  units_sold INTEGER
+);
+
+INSERT INTO phones (name, manufacturer, price, units_sold)
+VALUES
+  ('N1280', 'Nokia', 199, 1925),
+  ('iPhone 5S', 'Apple', 399, 9436),
+  ('Galaxy S5', 'Samsung', 299, 2359),
+  ('S5620 Monte', 'Samsung', 250, 2385);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+INSERT 0 4
+```
+
+**Count:**
+```sql
+SELECT COUNT(*) FROM photos;
+```
+**Output:**
+```
+ count
+-------
+     8
+(1 row)
+```
+
+**Sum, average, smallest, largest:**
+```sql
+SELECT SUM(units_sold) FROM phones;
+```
+**Output:**
+```
+  sum
+-------
+ 16105
+(1 row)
+```
+```sql
+SELECT AVG(price) FROM phones;
+```
+**Output:**
+```
+         avg
+----------------------
+ 286.7500000000000000
+(1 row)
+```
+`AVG` returns a long decimal. Tidy it with `ROUND` (topic 7):
+```sql
+SELECT ROUND(AVG(price), 2) AS average_price FROM phones;
+```
+**Output:**
+```
+ average_price
+---------------
+        286.75
+(1 row)
+```
+```sql
+SELECT MIN(price) AS cheapest, MAX(price) AS priciest FROM phones;
+```
+**Output:**
+```
+ cheapest | priciest
+----------+----------
+      199 |      399
+(1 row)
+```
+
+**Aggregate a calculation (topic 8):**
+```sql
+SELECT SUM(price * units_sold) AS total_revenue FROM phones;
+```
+**Output:**
+```
+ total_revenue
+---------------
+       5449630
+(1 row)
+```
+
+**Several aggregates in one query:**
+```sql
+SELECT
+  COUNT(*) AS phones,
+  MIN(price) AS cheapest,
+  MAX(price) AS priciest,
+  SUM(units_sold) AS total_units
+FROM phones;
+```
+**Output:**
+```
+ phones | cheapest | priciest | total_units
+--------+----------+----------+-------------
+      4 |      199 |      399 |       16105
+(1 row)
+```
+
+**Two rules you'll hit quickly:**
+
+**1. You can't mix an aggregate with a plain column** (without `GROUP BY`):
+```sql
+SELECT name, MAX(price) FROM phones;
+```
+**Output:**
+```
+ERROR:  column "phones.name" must appear in the GROUP BY clause or be used in an aggregate function
+```
+`MAX(price)` is one value, but `name` has four. Which name would Postgres pick?
+
+**2. You can't use an aggregate in `WHERE`:**
+```sql
+SELECT * FROM phones WHERE price > AVG(price);
+```
+**Output:**
+```
+ERROR:  aggregate functions are not allowed in WHERE
+```
+`WHERE` runs **before** anything is summarized. Filtering **groups** is the job of `HAVING` (topic 56).
+
+**`MIN` and `MAX` also work on text and dates:** `MAX(created_at)` gives the newest row's date.
+
+> ⚠️ **Warning:** `COUNT(*)` counts rows. `COUNT(column)` **skips `NULL`s**. They can give different answers (topic 53).
+
+> ⚠️ **Warning:** `SUM`, `AVG`, `MIN`, and `MAX` return `NULL` if there are **no non-NULL values** to work on.
+
+> ⚠️ **Warning:** `AVG` of integers returns a long `numeric`. Use `ROUND(..., 2)` for a readable result.
+
+> 🏆 **Golden Rule:** **An aggregate turns a column into one value.** Use it alone for a whole-table summary, or with `GROUP BY` for one summary per bucket.
