@@ -1005,3 +1005,149 @@ HAVING COUNT(*) > 2
 > ⚠️ **Warning:** Rows removed by `WHERE` change the group totals (Example 3). Decide whether you want to filter rows **before** counting or groups **after** counting.
 
 > 🏆 **Golden Rule:** **Group, aggregate, then filter.** Write the query without `HAVING` first, look at the numbers, then add the cutoff.
+
+
+
+## ➕ 58. More on Having!
+
+**What it does:** Covers the remaining `HAVING` details: **multiple conditions**, using a **different aggregate** than the one you display, **finding groups with zero matches**, and when to use `WHERE` instead.
+**Why it is used:** These are the cases that come up once the basics work, and the places where it's easiest to pick the wrong clause.
+**When to use it:** As a reference for more complex group filters.
+
+**Analogy:** The same manager closing tables can now have several rules: "fewer than 2 guests **and** no reservation," or "either of those."
+
+### Multiple conditions with `AND` / `OR`
+**Manufacturers that sold over 2,000 units **and** average under 300 in price:**
+```sql
+SELECT
+  manufacturer,
+  SUM(units_sold) AS total_units,
+  ROUND(AVG(price), 2) AS avg_price
+FROM phones
+GROUP BY manufacturer
+HAVING SUM(units_sold) > 2000 AND AVG(price) < 300;
+```
+**Output:**
+```
+ manufacturer | total_units | avg_price
+--------------+-------------+-----------
+ Samsung      |        4744 |    274.50
+(1 row)
+```
+Apple fails the price test, Nokia fails the units test.
+
+**With `OR`:**
+```sql
+SELECT manufacturer
+FROM phones
+GROUP BY manufacturer
+HAVING COUNT(*) > 1 OR MAX(price) > 350;
+```
+**Output (row order may differ):**
+```
+ manufacturer
+--------------
+ Apple
+ Samsung
+(2 rows)
+```
+Samsung has 2 phones, and Apple's top price is 399.
+
+### `HAVING` can use an aggregate you don't `SELECT`
+```sql
+SELECT manufacturer
+FROM phones
+GROUP BY manufacturer
+HAVING MAX(price) > 300;
+```
+**Output:**
+```
+ manufacturer
+--------------
+ Apple
+(1 row)
+```
+
+### Find groups with **zero** matches
+**Photos that have no comments:**
+```sql
+SELECT p.url
+FROM photos AS p
+LEFT JOIN comments AS c ON c.photo_id = p.id
+GROUP BY p.id
+HAVING COUNT(c.id) = 0;
+```
+**Output (row order may differ):**
+```
+       url
+-----------------
+ http://36.jpg
+ http://35.jpg
+ http://256.jpg
+ http://lost.jpg
+(4 rows)
+```
+This uses `COUNT(c.id)` from topic 53, so unmatched rows count as `0`. `p.id` is a primary key, so `p.url` can be selected.
+
+### Prefer `WHERE` for conditions on a plain column
+These two give the same result:
+```sql
+-- Works, but filters AFTER grouping
+SELECT manufacturer, SUM(units_sold)
+FROM phones
+GROUP BY manufacturer
+HAVING manufacturer IN ('Samsung', 'Apple');
+
+-- Better: filters BEFORE grouping, so less work
+SELECT manufacturer, SUM(units_sold)
+FROM phones
+WHERE manufacturer IN ('Samsung', 'Apple')
+GROUP BY manufacturer;
+```
+**Output (both):**
+```
+ manufacturer | sum
+--------------+------
+ Apple        | 9436
+ Samsung      | 4744
+(2 rows)
+```
+
+### `HAVING` without `GROUP BY` (rare)
+The whole table counts as **one group**:
+```sql
+SELECT COUNT(*) FROM photos HAVING COUNT(*) > 100;
+```
+**Output:**
+```
+ count
+-------
+(0 rows)
+```
+The single group (8 photos) failed the test, so nothing is returned.
+
+**Which clause for which condition:**
+
+| Condition on... | Use |
+|---|---|
+| A plain column of each row (`price > 100`) | `WHERE` |
+| A grouping column (`manufacturer = 'Apple'`) | `WHERE` (more efficient) |
+| An aggregate (`SUM(units_sold) > 5000`) | `HAVING` |
+
+**Section recap:**
+
+| Tool | Job |
+|---|---|
+| `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` | Summarize values |
+| `GROUP BY` | Make buckets |
+| `WHERE` | Filter rows **before** grouping |
+| `HAVING` | Filter groups **after** grouping |
+| `LEFT JOIN` + `COUNT(other.id)` | Count matches without miscounting unmatched rows |
+
+> ⚠️ **Warning:** Putting a row-level condition in `HAVING` still works, but it **wastes effort** by grouping rows that will be thrown away.
+
+> ⚠️ **Warning:** `HAVING` can't use `SELECT` aliases (topic 57). Repeat the aggregate.
+
+> ⚠️ **Warning:** `HAVING COUNT(*) = 0` never finds anything after a `LEFT JOIN`, because the unmatched row counts as 1. Use `COUNT(other.id) = 0` (topic 53).
+
+> 🏆 **Golden Rule:** **If the condition doesn't need an aggregate, use `WHERE`. If it does, use `HAVING`.**
