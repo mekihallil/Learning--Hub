@@ -671,3 +671,129 @@ GROUP BY manufacturer, price > 250;
 > ⚠️ **Warning:** The inserted comments change your data. Rerun the reset script from topic 36 if you want the original 4 comments back.
 
 > 🏆 **Golden Rule:** **Each grouping column makes buckets more specific.** Group by exactly the columns that define the question you're asking.
+
+
+
+## 🧗 55. Adding a Layer of Difficulty
+
+**What it does:** Combines **joins** with **grouping and aggregates**, so you can summarize data that is spread across several tables, such as comments per username or comments received per photo owner.
+**Why it is used:** Ids like `user_id` are meaningless in a report. Joins bring in the **names** and **URLs** people actually want to read.
+**When to use it:** Almost every real report needs this combination.
+
+**Analogy:** First you **look up each name tag** in the guest list (the join), then you **count the guests at each table** (the grouping).
+
+**The method (in this order):**
+
+| Step | Action | Check |
+|---|---|---|
+| 1 | Write the join **without** grouping | Do the rows look right? |
+| 2 | Decide what to **group by** | Which column defines a bucket? |
+| 3 | Add the **aggregate** | One row per bucket? |
+
+**Step 1: look at the plain join first:**
+```sql
+SELECT u.username, c.contents
+FROM comments AS c
+JOIN users AS u ON u.id = c.user_id;
+```
+**Output:** 10 rows, one per comment, each with its author's name.
+
+**Step 2 and 3: group and count:**
+```sql
+SELECT u.username, COUNT(*) AS comments_written
+FROM comments AS c
+JOIN users AS u ON u.id = c.user_id
+GROUP BY u.username;
+```
+**Output (row order may differ):**
+```
+ username  | comments_written
+-----------+------------------
+ monahan93 |                1
+ pferrer   |                5
+ si93onis  |                2
+ 99stroman |                2
+(4 rows)
+```
+
+**Comments per photo URL:**
+```sql
+SELECT p.url, COUNT(*) AS comment_count
+FROM comments AS c
+JOIN photos AS p ON p.id = c.photo_id
+GROUP BY p.url;
+```
+**Output:**
+```
+      url       | comment_count
+----------------+---------------
+ http://one.jpg |             2
+ http://two.jpg |             4
+ http://25.jpg  |             1
+ http://754.jpg |             3
+(4 rows)
+```
+
+**Include users with zero comments** (use a `LEFT JOIN` and `COUNT(c.id)`, from topic 53):
+```sql
+SELECT u.username, COUNT(c.id) AS comments_written
+FROM users AS u
+LEFT JOIN comments AS c ON c.user_id = u.id
+GROUP BY u.username;
+```
+**Output:**
+```
+  username  | comments_written
+------------+------------------
+ monahan93  |                1
+ pferrer    |                5
+ si93onis   |                2
+ 99stroman  |                2
+ lonelyuser |                0
+(5 rows)
+```
+
+**A harder one: comments received by each photo owner (three tables):**
+```sql
+SELECT owner.username, COUNT(c.id) AS comments_received
+FROM users AS owner
+LEFT JOIN photos AS p ON p.user_id = owner.id
+LEFT JOIN comments AS c ON c.photo_id = p.id
+GROUP BY owner.id;
+```
+**Output:**
+```
+  username  | comments_received
+------------+-------------------
+ monahan93  |                 5
+ pferrer    |                 3
+ si93onis   |                 0
+ 99stroman  |                 2
+ lonelyuser |                 0
+(5 rows)
+```
+**Sanity check:** 5 + 3 + 0 + 2 + 0 = **10**, the total number of comments. ✅
+
+**Two things in that query worth noting:**
+
+| Detail | Explanation |
+|---|---|
+| `GROUP BY owner.id` instead of `owner.username` | Usernames **aren't guaranteed unique**. The id is, so it's the safer grouping column |
+| `SELECT owner.username` is still allowed | `users.id` is a **primary key**, so PostgreSQL knows each id has exactly one username |
+
+**Both `LEFT JOIN`s are deliberate.** Making the second one a plain `JOIN` would drop users whose photos have no comments, because the unmatched rows would be removed (topic 48).
+
+**Sanity-check habit:** the totals should add up to something you can verify.
+
+| Check | Expected |
+|---|---|
+| Sum of the per-user comment counts | 10 (total comments) |
+| Number of rows after a `LEFT JOIN` from `users` | At least 5 (one per user) |
+
+> ⚠️ **Warning:** A join before grouping can **multiply rows**. If a number looks too big, inspect the un-grouped join result first.
+
+> ⚠️ **Warning:** After a `LEFT JOIN`, count a column from the **right** table (`COUNT(c.id)`), not `COUNT(*)` (topic 53).
+
+> ⚠️ **Warning:** Grouping by a non-unique column (like `username`) can silently merge different people.
+
+> 🏆 **Golden Rule:** **Join first, group second.** Get the joined rows right, then collapse them with `GROUP BY` and an aggregate.
