@@ -68,3 +68,97 @@ SELECT COUNT(*) FROM comments;
 > ⚠️ **Warning:** Aggregation **throws away the individual rows**. After `COUNT(*)` you can no longer see which photos were counted, only how many.
 
 > 🏆 **Golden Rule:** **Aggregate = many rows in, one value out. Group = do that once per bucket.**
+
+
+
+## 🖼️ 50. Picturing Group By
+
+**What it does:** Shows, step by step, what `GROUP BY` does to a table. It **sorts rows into buckets** that share the same value, then turns **each bucket into a single row**.
+**Why it is used:** Most `GROUP BY` mistakes come from not knowing what happens to the original rows. Once you can picture the buckets, the rules explain themselves.
+**When to use it:** Any time you're about to write a `GROUP BY`, or an error message mentions it.
+
+**Analogy:** A mail room. Letters arrive in one big pile, and a worker drops each into the **pigeonhole for its address**. At the end, each pigeonhole is a group.
+
+**Start with the photos table:**
+```
+ id |      url        | user_id
+----+-----------------+---------
+  1 | http://one.jpg  |       4
+  2 | http://two.jpg  |       1
+  3 | http://25.jpg   |       1
+  4 | http://36.jpg   |       1
+  5 | http://754.jpg  |       2
+  6 | http://35.jpg   |       3
+  7 | http://256.jpg  |       4
+  8 | http://lost.jpg |
+```
+
+**Step 1: `GROUP BY user_id` sorts rows into buckets by `user_id`:**
+```
+ Bucket user_id = 1     Bucket user_id = 2     Bucket user_id = 3
+ ┌───────────────┐      ┌───────────────┐      ┌───────────────┐
+ │ photo 2       │      │ photo 5       │      │ photo 6       │
+ │ photo 3       │      └───────────────┘      └───────────────┘
+ │ photo 4       │
+ └───────────────┘
+ Bucket user_id = 4     Bucket user_id = NULL
+ ┌───────────────┐      ┌───────────────┐
+ │ photo 1       │      │ photo 8       │
+ │ photo 7       │      └───────────────┘
+ └───────────────┘
+```
+
+**Step 2: each bucket becomes ONE output row:**
+```sql
+SELECT user_id
+FROM photos
+GROUP BY user_id;
+```
+**Output (row order may differ):**
+```
+ user_id
+---------
+
+       1
+       2
+       3
+       4
+(5 rows)
+```
+8 photo rows became **5** rows, one per bucket.
+
+**Key facts the picture reveals:**
+
+| Fact | Why |
+|---|---|
+| The number of output rows = the number of **buckets** | One row per group |
+| `NULL`s all land in **one** bucket | `GROUP BY` treats `NULL`s as equal to each other |
+| `GROUP BY` alone behaves like `SELECT DISTINCT` | It just lists each bucket once |
+
+**The rule that follows:** each bucket becomes **one** row, so you can only show a column if it has **one value per bucket**.
+```sql
+SELECT user_id, url
+FROM photos
+GROUP BY user_id;
+```
+**Output:**
+```
+ERROR:  column "photos.url" must appear in the GROUP BY clause or be used in an aggregate function
+LINE 1: SELECT user_id, url
+                        ^
+```
+Bucket 1 holds **three** different URLs. Postgres can't squeeze three values into one cell, so it refuses.
+
+**Which columns you may select after `GROUP BY`:**
+
+| Column | Allowed? | Why |
+|---|---|---|
+| The column you grouped by (`user_id`) | ✅ | Same value for the whole bucket |
+| An aggregate like `COUNT(*)` | ✅ | Produces one value per bucket (topic 51) |
+| Any other plain column (`url`) | ❌ | Different values inside one bucket |
+
+> ⚠️ **Warning:** `GROUP BY` doesn't sort the output. Row order is unpredictable unless you add `ORDER BY` (covered later).
+
+> ⚠️ **Warning:** The error message mentions "the GROUP BY clause or an aggregate function" because those are the **only two** ways to show a column.
+
+> 🏆 **Golden Rule:** **`GROUP BY` turns each bucket into one row.** If a column can have several values inside a bucket, you must summarize it with an aggregate or leave it out.
