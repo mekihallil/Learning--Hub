@@ -324,3 +324,105 @@ ERROR:  aggregate functions are not allowed in WHERE
 > ⚠️ **Warning:** `AVG` of integers returns a long `numeric`. Use `ROUND(..., 2)` for a readable result.
 
 > 🏆 **Golden Rule:** **An aggregate turns a column into one value.** Use it alone for a whole-table summary, or with `GROUP BY` for one summary per bucket.
+
+
+
+## 🤝 52. Combining Group By and Aggregates
+
+**What it does:** Uses `GROUP BY` to make the buckets and an **aggregate function** to summarize **each bucket**, giving one summary row per group.
+**Why it is used:** This is the real power of both tools. "How many photos **per user**?" and "total units **per manufacturer**?" need both.
+**When to use it:** Any per-category summary: per user, per product, per month, per country.
+
+**Analogy:** Sort the test papers into piles by class (`GROUP BY`), then calculate each pile's average (the aggregate).
+
+**Photos per user:**
+```sql
+SELECT user_id, COUNT(*) AS photo_count
+FROM photos
+GROUP BY user_id;
+```
+**Output (row order may differ):**
+```
+ user_id | photo_count
+---------+-------------
+         |           1
+       1 |           3
+       2 |           1
+       3 |           1
+       4 |           2
+(5 rows)
+```
+
+**Phones per manufacturer, with two aggregates:**
+```sql
+SELECT
+  manufacturer,
+  SUM(units_sold) AS total_units,
+  ROUND(AVG(price), 2) AS avg_price
+FROM phones
+GROUP BY manufacturer;
+```
+**Output:**
+```
+ manufacturer | total_units | avg_price
+--------------+-------------+-----------
+ Nokia        |        1925 |    199.00
+ Apple        |        9436 |    399.00
+ Samsung      |        4744 |    274.50
+(3 rows)
+```
+
+**Revenue per manufacturer (aggregate a calculation, topic 8):**
+```sql
+SELECT manufacturer, SUM(price * units_sold) AS revenue
+FROM phones
+GROUP BY manufacturer;
+```
+**Output:**
+```
+ manufacturer | revenue
+--------------+---------
+ Nokia        |  383075
+ Apple        | 3764964
+ Samsung      | 1301591
+(3 rows)
+```
+
+**How Postgres computed Samsung's row:**
+```
+Bucket manufacturer = 'Samsung'
+  Galaxy S5     price 299   units 2359
+  S5620 Monte   price 250   units 2385
+                            ───────────
+SUM(units_sold)  = 2359 + 2385      = 4744
+AVG(price)       = (299 + 250) / 2  = 274.50
+```
+
+**The pattern:**
+```sql
+SELECT <grouping column>, <aggregate(s)>
+FROM <table>
+GROUP BY <grouping column>;
+```
+
+**The matching rule:** every column in `SELECT` must be **either** in `GROUP BY` **or** inside an aggregate.
+
+| Column in `SELECT` | In `GROUP BY` or an aggregate? | Result |
+|---|---|---|
+| `manufacturer` | In `GROUP BY` | ✅ |
+| `SUM(units_sold)` | An aggregate | ✅ |
+| `name` | Neither | ❌ Error |
+
+**Common mistakes:**
+
+| Mistake | What happens |
+|---|---|
+| Forgetting `GROUP BY` | `ERROR: column ... must appear in the GROUP BY clause or be used in an aggregate function` |
+| Grouping by the wrong column | No error, but the **wrong** summary |
+| Using `WHERE` to filter on an aggregate | `ERROR: aggregate functions are not allowed in WHERE` |
+
+> ⚠️ **Warning:** Postgres can't tell you whether you grouped by the **right** column. Check a result by hand once, like the Samsung example above.
+
+> ⚠️ **Warning:** A name or label may not be unique. Grouping by `username` would merge two users who share the same name. Group by an id when uniqueness matters (topic 55).
+
+> 🏆 **Golden Rule:** **`SELECT` the grouping column plus aggregates, and `GROUP BY` the grouping column.** Those two lists should line up.
