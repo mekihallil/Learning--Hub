@@ -130,3 +130,132 @@ Because `ORDER BY` runs **after** `SELECT`, it can use your **aliases** (`ORDER 
 > ⚠️ **Warning:** Numbers stored as **text** sort alphabetically, so `'10'` comes before `'9'`. Store numbers in number columns.
 
 > 🏆 **Golden Rule:** **If order matters, say so with `ORDER BY`.** Never assume a table returns rows in a particular order.
+
+
+
+## 🔀 60. Two Variations on Sorting
+
+**What it does:** Two ways to make `ORDER BY` more precise. **Variation 1:** choose the **direction** (`ASC` or `DESC`). **Variation 2:** sort by **several columns**, so a second column breaks ties in the first.
+**Why it is used:** One column often has repeated values. Without a tie-breaker, rows with equal values come back in an unpredictable order.
+**When to use it:** Leaderboards with tied scores, products sorted by brand and then price, any list that must be consistent from one run to the next.
+
+**Analogy:** A phone book sorts by **last name first**. Among people with the same last name, it then sorts by **first name**. The second rule only matters when the first one ties.
+
+### Variation 1: ascending or descending
+```sql
+SELECT name, price FROM phones ORDER BY price ASC;    -- same as no keyword
+SELECT name, price FROM phones ORDER BY price DESC;   -- reversed
+```
+**Output of the `DESC` version:**
+```
+    name     | price
+-------------+-------
+ iPhone 5S   |   399
+ Galaxy S5   |   299
+ S5620 Monte |   250
+ N1280       |   199
+(4 rows)
+```
+
+### Variation 2: sort by multiple columns
+**Sort by manufacturer first, then by price within each manufacturer:**
+```sql
+SELECT manufacturer, name, price
+FROM phones
+ORDER BY manufacturer, price;
+```
+**Output:**
+```
+ manufacturer |    name     | price
+--------------+-------------+-------
+ Apple        | iPhone 5S   |   399
+ Nokia        | N1280       |   199
+ Samsung      | S5620 Monte |   250
+ Samsung      | Galaxy S5   |   299
+(4 rows)
+```
+Both Samsung phones tie on `manufacturer`, so `price` decides: 250 before 299.
+
+**Each column gets its own direction:**
+```sql
+SELECT manufacturer, name, price
+FROM phones
+ORDER BY manufacturer ASC, price DESC;
+```
+**Output:**
+```
+ manufacturer |    name     | price
+--------------+-------------+-------
+ Apple        | iPhone 5S   |   399
+ Nokia        | N1280       |   199
+ Samsung      | Galaxy S5   |   299
+ Samsung      | S5620 Monte |   250
+(4 rows)
+```
+`DESC` applies **only to the column right before it**. Now the Samsungs are 299 then 250.
+
+**A tie-breaker makes results reliable.** Many photos share a `user_id`:
+```sql
+SELECT id, url, user_id
+FROM photos
+ORDER BY user_id, id;
+```
+**Output:**
+```
+ id |       url       | user_id
+----+-----------------+---------
+  2 | http://two.jpg  |       1
+  3 | http://25.jpg   |       1
+  4 | http://36.jpg   |       1
+  5 | http://754.jpg  |       2
+  6 | http://35.jpg   |       3
+  1 | http://one.jpg  |       4
+  7 | http://256.jpg  |       4
+  8 | http://lost.jpg |
+(8 rows)
+```
+Adding `id` (which is unique) guarantees the same order every time.
+
+### Bonus: where do `NULL`s go?
+In an **ascending** sort, `NULL`s come **last**. In a **descending** sort, they come **first**:
+```sql
+SELECT id, user_id FROM photos ORDER BY user_id DESC, id;
+```
+**Output:**
+```
+ id | user_id
+----+---------
+  8 |
+  1 |       4
+  7 |       4
+  6 |       3
+  5 |       2
+  2 |       1
+  3 |       1
+  4 |       1
+(8 rows)
+```
+Override this with `NULLS FIRST` or `NULLS LAST`:
+```sql
+SELECT id, user_id FROM photos ORDER BY user_id DESC NULLS LAST, id;
+```
+**Output:** the same rows, but photo 8 now comes at the **bottom**.
+
+**Quick reference:**
+
+| You write | Result |
+|---|---|
+| `ORDER BY price` | Lowest first |
+| `ORDER BY price DESC` | Highest first |
+| `ORDER BY a, b` | Sort by `a`, break ties with `b` |
+| `ORDER BY a DESC, b` | `a` highest first, ties by `b` lowest first |
+| `ORDER BY a DESC, b DESC` | Both descending |
+| `ORDER BY a NULLS LAST` | Put missing values at the end |
+
+> ⚠️ **Warning:** Writing `ORDER BY a, b DESC` does **not** sort both descending. `DESC` belongs only to `b`. Add `DESC` to each column you want reversed.
+
+> ⚠️ **Warning:** If the first column has **no ties**, the second column never has any effect.
+
+> ⚠️ **Warning:** Rows with tied values and no tie-breaker can reorder between runs. That's harmless for a one-off look, but a problem for **pagination** (topic 61).
+
+> 🏆 **Golden Rule:** **End every important sort with a unique column** (usually the `id`). It removes all ambiguity.
