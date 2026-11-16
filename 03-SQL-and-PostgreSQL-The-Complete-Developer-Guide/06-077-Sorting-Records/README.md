@@ -259,3 +259,125 @@ SELECT id, user_id FROM photos ORDER BY user_id DESC NULLS LAST, id;
 > ⚠️ **Warning:** Rows with tied values and no tie-breaker can reorder between runs. That's harmless for a one-off look, but a problem for **pagination** (topic 61).
 
 > 🏆 **Golden Rule:** **End every important sort with a unique column** (usually the `id`). It removes all ambiguity.
+
+
+## ✂️ 61. Offset and Limit
+
+**What it does:** `LIMIT` returns only the **first N rows** of a result. `OFFSET` **skips N rows** before it starts returning.
+**Why it is used:** Showing "the top 3," "the latest 10," or "page 2 of results" means returning a slice of the rows, not all of them.
+**When to use it:** Top-N lists, leaderboards, and pagination (splitting results across pages).
+
+**Analogy:** A shop window display. `LIMIT` is how many items fit in the window. `OFFSET` is how many items you move past before you start filling it.
+
+**Keep only the first 2 rows (the two most expensive phones):**
+```sql
+SELECT name, price
+FROM phones
+ORDER BY price DESC
+LIMIT 2;
+```
+**Output:**
+```
+   name    | price
+-----------+-------
+ iPhone 5S |   399
+ Galaxy S5 |   299
+(2 rows)
+```
+
+**The single cheapest phone:**
+```sql
+SELECT name, price
+FROM phones
+ORDER BY price
+LIMIT 1;
+```
+**Output:**
+```
+ name  | price
+-------+-------
+ N1280 |   199
+(1 row)
+```
+
+**Skip the first row, then take 2 (`OFFSET`):**
+```sql
+SELECT name, price
+FROM phones
+ORDER BY price DESC
+LIMIT 2 OFFSET 1;
+```
+**Output:**
+```
+    name     | price
+-------------+-------
+ Galaxy S5   |   299
+ S5620 Monte |   250
+(2 rows)
+```
+The most expensive phone (399) was skipped.
+
+**Pagination with photos, 3 per page:**
+
+| Page | Query ends with | Rows returned |
+|---|---|---|
+| 1 | `LIMIT 3 OFFSET 0` | ids 1, 2, 3 |
+| 2 | `LIMIT 3 OFFSET 3` | ids 4, 5, 6 |
+| 3 | `LIMIT 3 OFFSET 6` | ids 7, 8 |
+
+```sql
+SELECT id, url
+FROM photos
+ORDER BY id
+LIMIT 3 OFFSET 3;
+```
+**Output (page 2):**
+```
+ id |      url
+----+----------------
+  4 | http://36.jpg
+  5 | http://754.jpg
+  6 | http://35.jpg
+(3 rows)
+```
+**The formula:**
+```
+OFFSET = (page_number - 1) * page_size
+```
+
+**Asking for a page beyond the end is not an error:**
+```sql
+SELECT id FROM photos ORDER BY id LIMIT 3 OFFSET 100;
+```
+**Output:**
+```
+ id
+----
+(0 rows)
+```
+
+**The standard SQL form** also works in PostgreSQL:
+```sql
+SELECT name, price FROM phones ORDER BY price DESC
+OFFSET 1 ROWS FETCH FIRST 2 ROWS ONLY;
+```
+It returns the same two rows as `LIMIT 2 OFFSET 1`.
+
+**Where it goes in a query:**
+
+| Order you write | |
+|---|---|
+| `SELECT` ... `FROM` ... | |
+| `WHERE` ... `GROUP BY` ... `HAVING` ... | |
+| `ORDER BY` ... | sort first |
+| `LIMIT` ... `OFFSET` ... | **last**, cut the slice |
+
+`LIMIT` and `OFFSET` run **after** sorting. That is why "top 2 by price" needs `ORDER BY price DESC` first.
+
+> ⚠️ **Warning:** **`LIMIT` without `ORDER BY` returns an arbitrary set of rows.** "The first 3 rows" means nothing until you say what "first" is.
+
+> ⚠️ **Warning:** For pagination, always sort by something **unique** (topic 60). Otherwise tied rows can shuffle between pages, causing duplicates or skipped rows.
+
+> ⚠️ **Warning:** A large `OFFSET` gets slow, because Postgres still has to read and discard all the skipped rows. For huge tables, apps often page with a condition like `WHERE id > last_seen_id ORDER BY id LIMIT 20` instead.
+
+> 🏆 **Golden Rule:** **Sort first, then slice.** `ORDER BY` decides which rows come first, and `LIMIT`/`OFFSET` choose the slice.
