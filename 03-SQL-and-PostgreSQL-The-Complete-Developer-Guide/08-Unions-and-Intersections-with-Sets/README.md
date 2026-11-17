@@ -342,3 +342,156 @@ WHERE user_id = 1 AND id IN (SELECT photo_id FROM comments);
 > ⚠️ **Warning:** `NULL = NULL` is never true in a `WHERE` (topic 11), but `INTERSECT` **does** treat two `NULL`s as matching. That surprises people who switch between the two approaches.
 
 > 🏆 **Golden Rule:** **`INTERSECT` = rows present in both queries.** Check each side on its own first, then intersect them.
+
+
+
+## ➖ 65. Removing Commonalities with Except
+
+**What it does:** `EXCEPT` returns the rows from the **first** query that do **not** appear in the **second** query. It's "list A, minus anything also in list B."
+**Why it is used:** Some questions are about what's **missing**: "which users have never posted?" or "which photos have no comments?"
+**When to use it:** Finding gaps, leftovers, and unmatched items.
+
+**Analogy:** You have a list of everyone you invited, and a list of those who RSVP'd. Subtract the RSVPs from the invites and you're left with **the people you still need to chase**.
+
+**Example 1: users who have never posted a photo.**
+```sql
+SELECT id FROM users
+EXCEPT
+SELECT user_id FROM photos;
+```
+**Output:**
+```
+ id
+----
+  5
+(1 row)
+```
+That's `lonelyuser`.
+
+| Query | Rows it returned |
+|---|---|
+| All user ids | 1, 2, 3, 4, 5 |
+| User ids that appear on a photo | 1, 2, 3, 4, and `NULL` |
+| **Except** (first minus second) | 5 |
+
+**Example 2: photos that have no comments.**
+```sql
+SELECT id FROM photos
+EXCEPT
+SELECT photo_id FROM comments;
+```
+**Output (row order may differ):**
+```
+ id
+----
+  4
+  6
+  7
+  8
+(4 rows)
+```
+
+| Query | Rows it returned |
+|---|---|
+| All photo ids | 1, 2, 3, 4, 5, 6, 7, 8 |
+| Photo ids with a comment | 1, 2, 3, 5 |
+| **Except** | 4, 6, 7, 8 |
+
+### Order matters (unlike `INTERSECT`)
+Swap the queries and you ask a completely different question:
+```sql
+SELECT photo_id FROM comments
+EXCEPT
+SELECT id FROM photos;
+```
+**Output:**
+```
+ photo_id
+----------
+(0 rows)
+```
+This asks "which commented photos are **not** real photos?" The answer is none, which is exactly what the foreign key from topic 27 guarantees.
+
+| Direction | Question | Result |
+|---|---|---|
+| `photos EXCEPT comments` | Photos with **no comments** | 4, 6, 7, 8 |
+| `comments EXCEPT photos` | Comments on **nonexistent** photos | none |
+
+### `EXCEPT ALL` subtracts the counts
+```sql
+SELECT user_id FROM comments
+EXCEPT ALL
+SELECT user_id FROM photos WHERE user_id IS NOT NULL;
+```
+**Output (row order may differ):**
+```
+ user_id
+---------
+       2
+       2
+       2
+       2
+       3
+(5 rows)
+```
+
+| user_id | In `comments` | In `photos` | Left after subtracting |
+|---|---|---|---|
+| 1 | 1 | 3 | 0 |
+| 2 | 5 | 1 | **4** |
+| 3 | 2 | 1 | **1** |
+| 4 | 2 | 2 | 0 |
+
+Plain `EXCEPT` on the same two queries returns **no rows**, because every value in the first list appears somewhere in the second.
+
+### The same question with a `LEFT JOIN` (topic 43)
+```sql
+SELECT p.id
+FROM photos AS p
+LEFT JOIN comments AS c ON c.photo_id = p.id
+WHERE c.id IS NULL;
+```
+**Output:** `4`, `6`, `7`, `8`. Same answer as Example 2.
+
+| | `EXCEPT` | `LEFT JOIN ... WHERE ... IS NULL` |
+|---|---|---|
+| **Reads like** | "A minus B" | "A where no partner in B" |
+| **Duplicates** | Removed (unless `EXCEPT ALL`) | Kept |
+| **Can show extra columns?** | Only the columns in both queries | Any column from either table |
+| **Best for** | Quick set subtraction on id lists | When you need more columns in the result |
+
+### A gotcha that `EXCEPT` avoids: `NOT IN` and `NULL`
+This looks like it should also find users with no photos:
+```sql
+SELECT id FROM users
+WHERE id NOT IN (SELECT user_id FROM photos);
+```
+**Output:**
+```
+ id
+----
+(0 rows)
+```
+**Zero rows**, even though `lonelyuser` exists. The list contains a `NULL` (the orphan photo), and `NOT IN` against a list with `NULL` never returns true (the warning from topic 15). `EXCEPT` treats `NULL` as an ordinary value, so Example 1 gave the right answer. If you use `NOT IN`, filter the `NULL`s out first:
+```sql
+SELECT id FROM users
+WHERE id NOT IN (SELECT user_id FROM photos WHERE user_id IS NOT NULL);
+```
+**Output:** `5`.
+
+### Recap of the three set operators
+| Operator | Returns | Order matters? | Duplicates |
+|---|---|---|---|
+| `UNION` | Rows in **either** query | No | Removed (`UNION ALL` keeps) |
+| `INTERSECT` | Rows in **both** | No | Removed (`INTERSECT ALL` keeps min) |
+| `EXCEPT` | Rows in the **first** but **not** the second | **Yes** | Removed (`EXCEPT ALL` subtracts counts) |
+
+All three follow the same rules from topic 63: same column count, compatible types, matched by position, and names taken from the first query.
+
+> ⚠️ **Warning:** **Order matters.** `A EXCEPT B` is not the same as `B EXCEPT A`. Double-check which list is first.
+
+> ⚠️ **Warning:** `EXCEPT` removes duplicates, so you can't use it to count how many times something occurs. Use `EXCEPT ALL` for that.
+
+> ⚠️ **Warning:** Other databases name this operator differently. Oracle calls it `MINUS`, and some older databases lack it. These notes are for PostgreSQL.
+
+> 🏆 **Golden Rule:** **`EXCEPT` = "first list minus second list."** It's the cleanest way to find what's missing, and it handles `NULL` safely where `NOT IN` does not.
