@@ -104,3 +104,107 @@ LINE 3: UNION
 
 > 🏆 **Golden Rule:** **`UNION` = stack and de-duplicate. `UNION ALL` = just stack.** Prefer `UNION ALL` when duplicates are impossible or acceptable, because it's cheaper.
 
+
+## 📌 63. A Few Notes on Union
+
+**What it does:** The rules and details you need to use `UNION` correctly: matching columns, matching types, naming, and sorting the final result.
+**Why it is used:** Most `UNION` errors come from breaking one of a few simple rules. Knowing them turns the error messages into obvious fixes.
+**When to use it:** As a checklist whenever a set operation fails or returns something unexpected. These rules apply to `INTERSECT` and `EXCEPT` too (topics 64 and 65).
+
+**Analogy:** Stacking two sheets of paper only lines up if both sheets have the **same number of columns**, and each column holds the **same kind of thing**.
+
+### Rule 1: both queries need the same number of columns
+```sql
+SELECT name, price FROM phones
+UNION
+SELECT name FROM phones;
+```
+**Output:**
+```
+ERROR:  each UNION query must have the same number of columns
+LINE 3: SELECT name FROM phones;
+               ^
+```
+
+### Rule 2: matching columns need compatible types
+```sql
+SELECT name FROM phones
+UNION
+SELECT price FROM phones;
+```
+**Output:**
+```
+ERROR:  UNION types character varying and integer cannot be matched
+```
+You can't stack text on top of numbers in the same column.
+
+### Rule 3: column names come from the **first** query
+```sql
+SELECT name AS item FROM phones WHERE manufacturer = 'Apple'
+UNION
+SELECT url FROM photos WHERE id = 1;
+```
+**Output (row order may differ):**
+```
+      item
+----------------
+ iPhone 5S
+ http://one.jpg
+(2 rows)
+```
+The column is called `item`, from the first query. Names in the second query are ignored.
+
+### Rule 4: `ORDER BY` at the end sorts the **whole** result
+```sql
+SELECT user_id FROM photos WHERE user_id IS NOT NULL
+UNION
+SELECT user_id FROM comments
+ORDER BY user_id DESC;
+```
+**Output:**
+```
+ user_id
+---------
+       4
+       3
+       2
+       1
+(4 rows)
+```
+Because the final `ORDER BY` has no parentheses, it applies to the combined list. It can only refer to the **output column names** (or positions).
+
+### Rule 5: parentheses give each side its own `ORDER BY` / `LIMIT`
+This is the pattern from topic 62:
+```sql
+(SELECT ... ORDER BY ... LIMIT 2)
+UNION
+(SELECT ... ORDER BY ... LIMIT 2);
+```
+
+### Rule 6: `NULL`s count as equal when removing duplicates
+Two `NULL`s in the same column are treated as one value, so `UNION` keeps just one. (This differs from `WHERE`, where `NULL = NULL` is never true.)
+
+### Often there is a simpler way
+If both sides read the **same table**, one `WHERE` with `OR` may do the job:
+```sql
+SELECT name FROM phones WHERE price > 300 OR units_sold > 2380;
+```
+Use `UNION` when the sides come from **different tables**, or when each side needs its **own sort or limit**.
+
+**Checklist for a failing `UNION`:**
+
+| Symptom | Likely cause |
+|---|---|
+| `each UNION query must have the same number of columns` | Different column counts |
+| `UNION types ... cannot be matched` | Incompatible types in the same position |
+| `syntax error at or near "UNION"` | Missing parentheses around a side with `ORDER BY` / `LIMIT` |
+| Fewer rows than expected | `UNION` removed duplicates. Try `UNION ALL` |
+| Odd column names | They come from the **first** query |
+
+> ⚠️ **Warning:** Columns are matched by **position**, not by name. Putting `name, price` in one query and `price, name` in the other mixes the two silently, if the types happen to be compatible.
+
+> ⚠️ **Warning:** `UNION` has to find duplicates (by sorting or hashing), which costs time on large results. Use `UNION ALL` when you can.
+
+> ⚠️ **Warning:** `ORDER BY` after the last query sorts everything. If you wanted to sort just the last query, wrap it in parentheses.
+
+> 🏆 **Golden Rule:** **Same number of columns, compatible types, matched by position.** Parenthesize any side that has its own `ORDER BY` or `LIMIT`, and put a final `ORDER BY` at the very end for the whole result.
