@@ -208,3 +208,137 @@ Use `UNION` when the sides come from **different tables**, or when each side nee
 > ⚠️ **Warning:** `ORDER BY` after the last query sorts everything. If you wanted to sort just the last query, wrap it in parentheses.
 
 > 🏆 **Golden Rule:** **Same number of columns, compatible types, matched by position.** Parenthesize any side that has its own `ORDER BY` or `LIMIT`, and put a final `ORDER BY` at the very end for the whole result.
+
+
+
+## 🤝 64. Commonalities with Intersect
+
+**What it does:** `INTERSECT` returns only the rows that appear in **both** queries. Anything found in just one of them is thrown away.
+**Why it is used:** Some questions are "which things satisfy **both** conditions?" and each condition comes from a different query or table.
+**When to use it:** Finding overlap: customers who bought both products, photos that match two different searches, ids that appear in two tables.
+
+**Analogy:** Two guest lists again, but now you want only the people **on both lists**. That's the overlap of two circles, the middle of a Venn diagram.
+
+```
+UNION       INTERSECT     EXCEPT
+ (###(###)###)  ( (###) )    (###( ) )
+ everything     only the     first list
+ from both      overlap      minus overlap
+```
+
+**Example 1: phones that are both pricey and popular.**
+```sql
+SELECT name FROM phones WHERE price > 250
+INTERSECT
+SELECT name FROM phones WHERE units_sold > 2000;
+```
+**Output (row order may differ):**
+```
+   name
+-----------
+ iPhone 5S
+ Galaxy S5
+(2 rows)
+```
+
+| Query | Rows it returned |
+|---|---|
+| Price over 250 | iPhone 5S (399), Galaxy S5 (299) |
+| Units sold over 2000 | iPhone 5S (9436), Galaxy S5 (2359), S5620 Monte (2385) |
+| **Intersect** | iPhone 5S, Galaxy S5 |
+
+S5620 Monte sold well, but costs exactly 250, so it fails the first test.
+
+**Example 2: photos by user 1 that also have comments.** The two lists come from **different tables**:
+```sql
+SELECT id FROM photos WHERE user_id = 1
+INTERSECT
+SELECT photo_id FROM comments;
+```
+**Output (row order may differ):**
+```
+ id
+----
+  2
+  3
+(2 rows)
+```
+
+| Query | Rows it returned |
+|---|---|
+| Photos owned by user 1 | 2, 3, 4 |
+| Photos that have any comment | 1, 2, 3, 5 |
+| **Intersect** | 2, 3 |
+
+Photo 4 has no comments, and photos 1 and 5 belong to other users.
+
+**`INTERSECT ALL` keeps duplicates.** For each value it keeps the **smaller** of its two counts:
+```sql
+SELECT user_id FROM comments
+INTERSECT ALL
+SELECT user_id FROM photos WHERE user_id IS NOT NULL;
+```
+**Output (row order may differ):**
+```
+ user_id
+---------
+       1
+       2
+       3
+       4
+       4
+(5 rows)
+```
+
+| user_id | Times in `comments` | Times in `photos` | Kept by `INTERSECT ALL` |
+|---|---|---|---|
+| 1 | 1 | 3 | **1** |
+| 2 | 5 | 1 | **1** |
+| 3 | 2 | 1 | **1** |
+| 4 | 2 | 2 | **2** |
+
+Plain `INTERSECT` would return just `1, 2, 3, 4`.
+
+**Order doesn't matter for `INTERSECT`.** Swapping the two queries gives the same rows:
+```sql
+SELECT photo_id FROM comments
+INTERSECT
+SELECT id FROM photos WHERE user_id = 1;
+```
+**Output:** `2` and `3` again. (The column is now named `photo_id`, because names come from the first query, topic 63.)
+
+**The same result with other tools:**
+
+| Approach | Query ends with |
+|---|---|
+| `INTERSECT` | `... INTERSECT SELECT photo_id FROM comments` |
+| `IN` (topic 15) | `WHERE user_id = 1 AND id IN (SELECT photo_id FROM comments)` |
+| `JOIN` | `JOIN comments ON comments.photo_id = photos.id`, which needs `DISTINCT` to avoid repeats |
+
+```sql
+SELECT id FROM photos
+WHERE user_id = 1 AND id IN (SELECT photo_id FROM comments);
+```
+**Output:** `2` and `3`. (That inner `SELECT` is a **subquery**, a bigger topic that comes later.)
+
+`INTERSECT` reads nicely when both sides are **complete queries** that you can test separately.
+
+**The rules are the same as `UNION` (topic 63):**
+
+| Rule | Meaning |
+|---|---|
+| Same number of columns | Both queries return the same count of columns |
+| Compatible types | Matching positions must hold comparable types |
+| Matched by **position** | Not by column name |
+| Names come from the **first** query | Later names are ignored |
+| `NULL`s count as equal | Two `NULL`s match each other here |
+
+**A note on mixing set operators:** `INTERSECT` binds **more tightly** than `UNION` and `EXCEPT`. So `A UNION B INTERSECT C` means `A UNION (B INTERSECT C)`. Add parentheses whenever you mix them.
+
+> ⚠️ **Warning:** **`INTERSECT` removes duplicates** just like `UNION`. Use `INTERSECT ALL` if the counts matter.
+
+> ⚠️ **Warning:** An empty overlap is **not an error**. If nothing is shared you simply get `(0 rows)`, so check the two queries separately if you expected results.
+
+> ⚠️ **Warning:** `NULL = NULL` is never true in a `WHERE` (topic 11), but `INTERSECT` **does** treat two `NULL`s as matching. That surprises people who switch between the two approaches.
+
+> 🏆 **Golden Rule:** **`INTERSECT` = rows present in both queries.** Check each side on its own first, then intersect them.
