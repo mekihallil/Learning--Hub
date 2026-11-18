@@ -798,3 +798,144 @@ or guarantee one row with a unique column. `IN` is safe whether the subquery ret
 > ⚠️ **Warning:** An empty scalar subquery quietly gives `(0 rows)`. If a filter returns nothing, run the inner query alone and check it.
 
 > 🏆 **Golden Rule:** **One value, use `=` or `>`. A list, use `IN`.** When in doubt about uniqueness, choose `IN`.
+
+
+
+## 🚫 73. The Not In Operator with a List
+
+**What it does:** `NOT IN` with a subquery keeps only the rows whose value is **not found in the list** the subquery returns.
+**Why it is used:** It answers "which ones have **none**?" questions: users with no comments, photos nobody commented on, manufacturers with no expensive phones.
+**When to use it:** Finding what is missing from, or never appears in, another table's list.
+
+**Analogy:** A bouncer with a **banned list**. Anyone whose name is on it is turned away, and everyone else walks in.
+
+### Example 1: phones whose manufacturer has no phone over 300
+```sql
+SELECT name, manufacturer, price
+FROM phones
+WHERE manufacturer NOT IN (
+  SELECT manufacturer FROM phones WHERE price > 300
+);
+```
+**Output (row order may differ):**
+```
+    name     | manufacturer | price
+-------------+--------------+-------
+ N1280       | Nokia        |   199
+ Galaxy S5   | Samsung      |   299
+ S5620 Monte | Samsung      |   250
+(3 rows)
+```
+The inner query returns just `Apple` (iPhone 5S costs 399), so Apple's phones are excluded.
+
+### Example 2: users who have never commented
+```sql
+SELECT username
+FROM users
+WHERE id NOT IN (SELECT user_id FROM comments);
+```
+**Output:**
+```
+  username
+------------
+ lonelyuser
+(1 row)
+```
+
+### Example 3: photos with no comments
+```sql
+SELECT url
+FROM photos
+WHERE id NOT IN (SELECT photo_id FROM comments);
+```
+**Output (row order may differ):**
+```
+       url
+-----------------
+ http://36.jpg
+ http://35.jpg
+ http://256.jpg
+ http://lost.jpg
+(4 rows)
+```
+This matches the `EXCEPT` result from topic 65.
+
+### The NULL trap
+**Users who have never posted a photo:**
+```sql
+SELECT username
+FROM users
+WHERE id NOT IN (SELECT user_id FROM photos);
+```
+**Output:**
+```
+ username
+----------
+(0 rows)
+```
+**Zero rows**, although `lonelyuser` clearly exists. The list from `photos` contains a **`NULL`** (the orphan photo `lost.jpg`).
+
+**Why it breaks:** `5 NOT IN (1, 2, 3, 4, NULL)` means:
+```
+5 <> 1  AND  5 <> 2  AND  5 <> 3  AND  5 <> 4  AND  5 <> NULL
+ true       true        true        true        unknown (NULL)
+```
+One "unknown" turns the **whole** test into "unknown", and `WHERE` only keeps rows that are **true**.
+
+**Fix 1: remove the `NULL`s in the subquery**
+```sql
+SELECT username
+FROM users
+WHERE id NOT IN (SELECT user_id FROM photos WHERE user_id IS NOT NULL);
+```
+**Output:**
+```
+  username
+------------
+ lonelyuser
+(1 row)
+```
+
+**Four ways to answer "which users have no photos?"**
+
+| Approach | Handles `NULL` in the list safely? |
+|---|---|
+| `NOT IN (SELECT ... WHERE col IS NOT NULL)` | ✅ Yes, after you filter |
+| `NOT IN (SELECT ...)` with no filter | ❌ **No**, returns nothing |
+| `EXCEPT` (topic 65) | ✅ Yes |
+| `LEFT JOIN ... WHERE right.id IS NULL` (topic 43) | ✅ Yes |
+| `NOT EXISTS` (a preview) | ✅ Yes |
+
+**A preview of `NOT EXISTS`**, which is immune to the problem:
+```sql
+SELECT u.username
+FROM users AS u
+WHERE NOT EXISTS (SELECT 1 FROM photos AS p WHERE p.user_id = u.id);
+```
+**Output:**
+```
+  username
+------------
+ lonelyuser
+(1 row)
+```
+
+**`NOT IN` with a typed list is still fine** (topic 15):
+```sql
+SELECT name FROM phones WHERE manufacturer NOT IN ('Apple', 'Nokia');
+```
+**Output:**
+```
+    name
+-------------
+ Galaxy S5
+ S5620 Monte
+(2 rows)
+```
+The trap only appears when the list **comes from a column that can contain `NULL`**.
+
+> ⚠️ **Warning:** **One `NULL` in the list makes `NOT IN` return no rows at all**, with no error. This is one of the most common silent SQL bugs.
+
+> ⚠️ **Warning:** Before using `NOT IN (SELECT col ...)`, ask: can `col` be `NULL`? Foreign keys usually can (topic 31).
+
+> 🏆 **Golden Rule:** **If the subquery's column might contain `NULL`, either filter them out with `WHERE col IS NOT NULL` or use `NOT EXISTS`, `EXCEPT`, or a `LEFT JOIN`.**
