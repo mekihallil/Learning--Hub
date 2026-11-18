@@ -448,3 +448,89 @@ PostgreSQL 16 and newer allow it to be omitted, but **always write one** so the 
 > ⚠️ **Warning:** Only the columns you **select inside** the subquery exist outside it. Forgetting one means `ERROR: column "..." does not exist`.
 
 > 🏆 **Golden Rule:** **`FROM (subquery) AS alias` turns a query result into a table you can query again.** Use it for a second round of aggregation or to filter on a calculated column.
+
+
+
+## 1️⃣ 70. From Subqueries that Return a Value
+
+**What it does:** Looks at a `FROM` subquery that returns **just one value** (one row, one column), so the "table" it produces is a **1 x 1 table**. It also shows that a `SELECT` can run **without a `FROM` at all**, using only scalar subqueries.
+**Why it is used:** A one-value table is handy for **reusing a number many times by name**, and for combining several summary values into one calculation.
+**When to use it:** When you need an average, maximum, or total available alongside other data, or inside a bigger formula.
+
+**Analogy:** A sticky note with **one number** on it. You can stick it onto every row of a report (a cross join), or use it in a formula by itself.
+
+### A 1 x 1 table in `FROM`
+```sql
+SELECT *
+FROM (SELECT MAX(price) AS max_price FROM phones) AS m;
+```
+**Output:**
+```
+ max_price
+-----------
+       399
+(1 row)
+```
+
+### A `SELECT` with no `FROM`
+You can calculate with scalar subqueries alone. **How many times more expensive is the priciest phone than the cheapest?**
+```sql
+SELECT ROUND(
+  (SELECT MAX(price) FROM phones)::numeric / (SELECT MIN(price) FROM phones),
+  2
+) AS price_ratio;
+```
+**Output:**
+```
+ price_ratio
+-------------
+        2.01
+(1 row)
+```
+`399 / 199 = 2.005...`. The `::numeric` cast avoids integer division (topic 7).
+
+### Stick the one value onto every row with `CROSS JOIN`
+A 1 x 1 table joined to a big table adds **one column** to every row:
+```sql
+SELECT
+  p.name,
+  p.price,
+  ROUND(a.avg_price, 2) AS avg_price,
+  ROUND(p.price - a.avg_price, 2) AS diff
+FROM phones AS p
+CROSS JOIN (SELECT AVG(price) AS avg_price FROM phones) AS a;
+```
+**Output:**
+```
+    name     | price | avg_price |  diff
+-------------+-------+-----------+--------
+ N1280       |   199 |    286.75 | -87.75
+ iPhone 5S   |   399 |    286.75 | 112.25
+ Galaxy S5   |   299 |    286.75 |  12.25
+ S5620 Monte |   250 |    286.75 | -36.75
+(4 rows)
+```
+`CROSS JOIN` pairs every phone with the **one** row of `a`, so no `ON` is needed (topic 44).
+
+### Why use `FROM` instead of repeating a `SELECT`-list subquery?
+Here the average is used **twice** by name (`a.avg_price`). Written as `SELECT`-list subqueries, you'd have to type `(SELECT AVG(price) FROM phones)` twice.
+
+**Three places a one-value subquery can live:**
+
+| Place | What it does | Example use |
+|---|---|---|
+| `SELECT` list (topic 68) | Adds a column | `(SELECT MAX(price) FROM phones) AS max_price` |
+| `WHERE` (topic 72) | Used in a comparison | `WHERE price > (SELECT AVG(price) FROM phones)` |
+| `FROM` (this topic) | A 1 x 1 table you can name and reuse | `CROSS JOIN (SELECT AVG(price) AS avg_price ...) AS a` |
+
+**Make sure it really is one row.** A `FROM` subquery is **allowed** to return many rows (it's just a table), but then `CROSS JOIN` multiplies your rows:
+```
+4 phones x 3 rows = 12 rows
+```
+An aggregate with no `GROUP BY` always returns exactly one row, which is why it's safe here.
+
+> ⚠️ **Warning:** `CROSS JOIN` with a subquery that returns **more than one row** multiplies your results. Check the inner query's row count first.
+
+> ⚠️ **Warning:** Integer division applies here too. `(SELECT MAX(price) ...) / (SELECT MIN(price) ...)` returns `2`, not `2.01`, unless you cast to `numeric`.
+
+> 🏆 **Golden Rule:** **Put a summary value in `FROM` as a one-row table when you want to use it several times.** It's tidier than repeating the same subquery.
