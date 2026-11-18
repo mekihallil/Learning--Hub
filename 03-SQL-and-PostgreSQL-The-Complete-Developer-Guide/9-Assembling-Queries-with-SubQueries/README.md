@@ -208,3 +208,126 @@ ERROR:  subquery has too many columns
 > ⚠️ **Warning:** A scalar subquery that matches **no** rows gives `NULL`, not an error. A comparison against `NULL` quietly returns no rows (topic 11).
 
 > 🏆 **Golden Rule:** **Count the columns and rows first.** One value goes anywhere, a one-column list goes with `IN`, and a full table goes in `FROM` or a `JOIN`.
+
+
+
+## 🧾 68. Subqueries in a Select
+
+**What it does:** Puts a subquery **in the `SELECT` list**, so it becomes an extra **column** in the output. It must return a **single value** (a scalar, topic 67).
+**Why it is used:** You can show a summary number (like the highest price) **next to every row**, or do math between each row and that number.
+**When to use it:** Comparing each row to a total, an average, a maximum, or any one-off lookup.
+
+**Analogy:** A school report card that prints your score and also prints the **class average** on every line, so you can compare at a glance.
+
+**Show the maximum price beside every phone:**
+```sql
+SELECT name, price, (SELECT MAX(price) FROM phones) AS max_price
+FROM phones;
+```
+**Output:**
+```
+    name     | price | max_price
+-------------+-------+-----------
+ N1280       |   199 |       399
+ iPhone 5S   |   399 |       399
+ Galaxy S5   |   299 |       399
+ S5620 Monte |   250 |       399
+(4 rows)
+```
+The inner query runs **once**, and its single value is repeated on every row.
+
+**Do math with it:** how far is each phone below the top price?
+```sql
+SELECT name, price, (SELECT MAX(price) FROM phones) - price AS below_max
+FROM phones;
+```
+**Output:**
+```
+    name     | price | below_max
+-------------+-------+-----------
+ N1280       |   199 |       200
+ iPhone 5S   |   399 |         0
+ Galaxy S5   |   299 |       100
+ S5620 Monte |   250 |       149
+(4 rows)
+```
+
+### A subquery that looks at the outer row (correlated)
+The subquery can refer to a column of the **outer** query. Then it re-runs **for each outer row**.
+```sql
+SELECT
+  username,
+  (SELECT COUNT(*) FROM photos WHERE photos.user_id = users.id) AS photo_count
+FROM users;
+```
+**Output:**
+```
+  username  | photo_count
+------------+-------------
+ monahan93  |           3
+ pferrer    |           1
+ si93onis   |           1
+ 99stroman  |           2
+ lonelyuser |           0
+(5 rows)
+```
+For each user, the subquery counts the photos whose `user_id` matches **that** user's `id`. `lonelyuser` gets `0` because `COUNT(*)` returns `0` when there are no rows.
+
+**Not every aggregate returns 0 for no rows:**
+```sql
+SELECT
+  username,
+  (SELECT MAX(id) FROM photos WHERE photos.user_id = users.id) AS newest_photo_id
+FROM users;
+```
+**Output:**
+```
+  username  | newest_photo_id
+------------+-----------------
+ monahan93  |               4
+ pferrer    |               5
+ si93onis   |               6
+ 99stroman  |               7
+ lonelyuser |
+(5 rows)
+```
+`MAX` of nothing is `NULL`.
+
+**The two shape errors you can hit here:**
+```sql
+SELECT name, (SELECT price FROM phones) FROM phones;
+```
+**Output:**
+```
+ERROR:  more than one row returned by a subquery used as an expression
+```
+```sql
+SELECT name, (SELECT name, price FROM phones LIMIT 1) FROM phones;
+```
+**Output:**
+```
+ERROR:  subquery must return only one column
+```
+
+**Plain vs correlated:**
+
+| | Plain subquery | Correlated subquery |
+|---|---|---|
+| **Refers to the outer row?** | No | Yes (`users.id`) |
+| **Runs** | Once | Once **per outer row** (conceptually) |
+| **Example** | `(SELECT MAX(price) FROM phones)` | `(SELECT COUNT(*) ... WHERE photos.user_id = users.id)` |
+
+**The correlated count could also be written with a join:**
+```sql
+SELECT u.username, COUNT(p.id) AS photo_count
+FROM users AS u
+LEFT JOIN photos AS p ON p.user_id = u.id
+GROUP BY u.id;
+```
+Same result. Joins are usually faster on big tables, but the subquery version is often easier to read.
+
+> ⚠️ **Warning:** A subquery in `SELECT` must return **exactly one column** and **at most one row**. More rows is an error, and zero rows gives `NULL`.
+
+> ⚠️ **Warning:** A correlated subquery on a very large table can be slow, because it may run once for every row.
+
+> 🏆 **Golden Rule:** **A `SELECT`-list subquery adds one computed column.** Make sure it can only ever return one value.
