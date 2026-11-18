@@ -668,3 +668,133 @@ Summarizing each table **before** joining gives each user exactly **one row per 
 > ⚠️ **Warning:** After a `LEFT JOIN`, summary columns are `NULL` for unmatched rows. Wrap them in `COALESCE(..., 0)` when you want `0` instead.
 
 > 🏆 **Golden Rule:** **Aggregate first, join second.** A subquery in the `JOIN` gives you one tidy row per key, which keeps your totals correct.
+
+
+
+## 🎯 72. Data Structure with Where Subqueries
+
+**What it does:** Shows how the **shape** of a subquery (topic 67) decides which `WHERE` operator you can use. A **single value** works with `=`, `>`, and `<`. A **one-column list** works with `IN`.
+**Why it is used:** `WHERE` is the most common place for subqueries, and nearly every error there is a shape mismatch.
+**When to use it:** Any time you filter one table using values that come from another query.
+
+**Analogy:** A bouncer's instructions come in two forms. "Let in anyone **taller than this person**" (one value to compare against) or "let in anyone **whose name is on this list**" (many values to check against).
+
+### Scalar subquery with a comparison operator
+**Photos belonging to the user named `monahan93`:**
+```sql
+SELECT url
+FROM photos
+WHERE user_id = (SELECT id FROM users WHERE username = 'monahan93');
+```
+**Output:**
+```
+      url
+----------------
+ http://two.jpg
+ http://25.jpg
+ http://36.jpg
+(3 rows)
+```
+The inner query returns one value (`1`), so `=` works.
+
+### List subquery with `IN`
+**Usernames of people who have written at least one comment:**
+```sql
+SELECT username
+FROM users
+WHERE id IN (SELECT user_id FROM comments);
+```
+**Output (row order may differ):**
+```
+ username
+-----------
+ monahan93
+ pferrer
+ si93onis
+ 99stroman
+(4 rows)
+```
+**Photos that have at least one comment:**
+```sql
+SELECT url
+FROM photos
+WHERE id IN (SELECT photo_id FROM comments);
+```
+**Output (row order may differ):**
+```
+      url
+----------------
+ http://one.jpg
+ http://two.jpg
+ http://25.jpg
+ http://754.jpg
+(4 rows)
+```
+
+### Nested subqueries
+**Photos that `si93onis` has commented on:**
+```sql
+SELECT url
+FROM photos
+WHERE id IN (
+  SELECT photo_id
+  FROM comments
+  WHERE user_id = (SELECT id FROM users WHERE username = 'si93onis')
+);
+```
+**Output (row order may differ):**
+```
+      url
+----------------
+ http://one.jpg
+ http://two.jpg
+(2 rows)
+```
+**Reading it from the inside out:**
+
+| Step | Query | Result |
+|---|---|---|
+| 1 | `SELECT id FROM users WHERE username = 'si93onis'` | `3` |
+| 2 | `SELECT photo_id FROM comments WHERE user_id = 3` | `1, 2` |
+| 3 | `SELECT url FROM photos WHERE id IN (1, 2)` | `one.jpg`, `two.jpg` |
+
+**Operator and shape, matched up:**
+
+| Operator | Needs from the subquery | Example |
+|---|---|---|
+| `=`, `<>` | **One value** | `WHERE user_id = (SELECT id ...)` |
+| `>`, `<`, `>=`, `<=` | **One value** | `WHERE price > (SELECT AVG(price) ...)` |
+| `IN`, `NOT IN` | **A one-column list** | `WHERE id IN (SELECT photo_id ...)` |
+| `ANY`, `SOME`, `ALL` | **A one-column list** | Topic 74 |
+
+**What goes wrong when the shape is wrong:**
+
+| You wrote | Problem | Error |
+|---|---|---|
+| `= (subquery returning 2+ rows)` | Many values where one is expected | `more than one row returned by a subquery used as an expression` |
+| `IN (subquery returning 2 columns)` | Too many columns | `subquery has too many columns` |
+| `= (subquery returning 0 rows)` | The subquery acts like `NULL` | **No error**, just `(0 rows)` |
+
+**The silent one:**
+```sql
+SELECT url FROM photos
+WHERE user_id = (SELECT id FROM users WHERE username = 'nobody');
+```
+**Output:**
+```
+ url
+-----
+(0 rows)
+```
+
+**Making a risky scalar subquery safe.** If the lookup might return several rows, either use `IN`:
+```sql
+WHERE user_id IN (SELECT id FROM users WHERE username = 'monahan93')
+```
+or guarantee one row with a unique column. `IN` is safe whether the subquery returns zero, one, or many rows.
+
+> ⚠️ **Warning:** `= (SELECT ...)` assumes **exactly one** row. A username isn't guaranteed unique in our table, so `IN` is the safer choice.
+
+> ⚠️ **Warning:** An empty scalar subquery quietly gives `(0 rows)`. If a filter returns nothing, run the inner query alone and check it.
+
+> 🏆 **Golden Rule:** **One value, use `=` or `>`. A list, use `IN`.** When in doubt about uniqueness, choose `IN`.
