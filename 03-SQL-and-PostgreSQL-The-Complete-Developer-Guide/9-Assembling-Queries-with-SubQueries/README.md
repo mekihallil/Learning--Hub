@@ -939,3 +939,152 @@ The trap only appears when the list **comes from a column that can contain `NULL
 > ⚠️ **Warning:** Before using `NOT IN (SELECT col ...)`, ask: can `col` be `NULL`? Foreign keys usually can (topic 31).
 
 > 🏆 **Golden Rule:** **If the subquery's column might contain `NULL`, either filter them out with `WHERE col IS NOT NULL` or use `NOT EXISTS`, `EXCEPT`, or a `LEFT JOIN`.**
+
+
+
+
+
+## 🆕 74. A New Where Operator (Some, Any, All)
+
+**What it does:** `ANY` (also spelled `SOME`) and `ALL` compare a value against **every item in a list** returned by a subquery. `ANY` is true if the comparison holds for **at least one** item. `ALL` is true only if it holds for **every** item.
+**Why it is used:** A plain `>` can only compare against **one** value. With `ANY` and `ALL` you can say "more expensive than **all** Samsung phones" without first working out the maximum.
+**When to use it:** Comparing against a whole group: beating every competitor, beating at least one, or matching any value in a set.
+
+**Analogy:** A race. "Faster than **all** the other runners" means you won. "Faster than **any** other runner" means you beat at least one. Same comparison, very different bar.
+
+**The list used below** (Samsung's prices):
+```sql
+SELECT price FROM phones WHERE manufacturer = 'Samsung';
+```
+**Output:**
+```
+ price
+-------
+   299
+   250
+(2 rows)
+```
+
+### `> ALL`: bigger than every item
+```sql
+SELECT name, price
+FROM phones
+WHERE price > ALL (SELECT price FROM phones WHERE manufacturer = 'Samsung');
+```
+**Output:**
+```
+   name    | price
+-----------+-------
+ iPhone 5S |   399
+(1 row)
+```
+Only 399 beats **both** 299 and 250.
+
+### `> ANY` (or `> SOME`): bigger than at least one item
+```sql
+SELECT name, price
+FROM phones
+WHERE price > ANY (SELECT price FROM phones WHERE manufacturer = 'Samsung');
+```
+**Output (row order may differ):**
+```
+   name    | price
+-----------+-------
+ iPhone 5S |   399
+ Galaxy S5 |   299
+(2 rows)
+```
+Beating **250** is enough. `SOME` is exactly the same as `ANY`.
+
+### `< ALL`: smaller than every item
+```sql
+SELECT name, price
+FROM phones
+WHERE price < ALL (SELECT price FROM phones WHERE manufacturer = 'Samsung');
+```
+**Output:**
+```
+ name  | price
+-------+-------
+ N1280 |   199
+(1 row)
+```
+
+**What each form means:**
+
+| Form | True when the value is... | Same as |
+|---|---|---|
+| `> ALL (list)` | Greater than **every** item | `> MAX(list)` |
+| `> ANY (list)` | Greater than **at least one** item | `> MIN(list)` |
+| `< ALL (list)` | Less than **every** item | `< MIN(list)` |
+| `< ANY (list)` | Less than **at least one** item | `< MAX(list)` |
+| `= ANY (list)` | Equal to **one** of the items | `IN (list)` |
+| `<> ALL (list)` | Different from **every** item | `NOT IN (list)` |
+
+**Proof of two equivalences:**
+```sql
+-- Same as: price > MAX of the Samsung prices
+SELECT name FROM phones
+WHERE price > (SELECT MAX(price) FROM phones WHERE manufacturer = 'Samsung');
+```
+**Output:** `iPhone 5S`, the same single row as `> ALL`.
+
+```sql
+SELECT name, price
+FROM phones
+WHERE price = ANY (SELECT price FROM phones WHERE manufacturer = 'Samsung');
+```
+**Output (row order may differ):**
+```
+    name     | price
+-------------+-------
+ Galaxy S5   |   299
+ S5620 Monte |   250
+(2 rows)
+```
+That's identical to `price IN (...)`.
+
+**It works with a typed array too:**
+```sql
+SELECT name FROM phones WHERE price = ANY (ARRAY[199, 399]);
+```
+**Output:**
+```
+   name
+-----------
+ N1280
+ iPhone 5S
+(2 rows)
+```
+
+**The empty-list surprise.** If the subquery returns **no rows**, there are no items to fail the test:
+```sql
+SELECT name FROM phones
+WHERE price > ALL (SELECT price FROM phones WHERE manufacturer = 'Sony');
+```
+**Output:**
+```
+    name
+-------------
+ N1280
+ iPhone 5S
+ Galaxy S5
+ S5620 Monte
+(4 rows)
+```
+`ALL` over an **empty** list is **true** for every row. `ANY` over an empty list is **false**, so `> ANY (empty)` returns no rows.
+
+| List | `> ALL` | `> ANY` |
+|---|---|---|
+| Has items | Must beat every one | Must beat at least one |
+| **Empty** | ✅ True for everyone | ❌ False for everyone |
+
+**`NULL`s in the list** behave as in topic 73. A `NULL` can make the whole test "unknown", so a row isn't returned. Filter them out if the list column can be `NULL`.
+
+> ⚠️ **Warning:** `ANY` and `ALL` need a subquery (or array) that returns **one column**.
+
+> ⚠️ **Warning:** `> ALL` over an **empty** list matches **everything**, which is usually the opposite of what you intended. Check that the list isn't empty.
+
+> ⚠️ **Warning:** `ANY`, `SOME`, and `ALL` here are the **comparison operators**. They're unrelated to `UNION ALL` or `COUNT(DISTINCT ...)`, although `ALL` appears in both.
+
+> 🏆 **Golden Rule:** **`ALL` means "every one," `ANY` means "at least one."** For simple cases, `MAX` and `MIN` give the same answer, but `ANY` and `ALL` read closer to plain English.
