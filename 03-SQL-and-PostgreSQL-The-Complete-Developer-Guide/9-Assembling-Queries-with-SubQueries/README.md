@@ -331,3 +331,120 @@ Same result. Joins are usually faster on big tables, but the subquery version is
 > ⚠️ **Warning:** A correlated subquery on a very large table can be slow, because it may run once for every row.
 
 > 🏆 **Golden Rule:** **A `SELECT`-list subquery adds one computed column.** Make sure it can only ever return one value.
+
+
+
+## 📋 69. Subqueries in a From
+
+**What it does:** Puts a subquery **in the `FROM` clause**, so its result acts like a **temporary table** that the outer query reads from.
+**Why it is used:** Some answers need **two rounds of summarizing**, like "the average of the per-group maximums." You can't nest aggregate functions directly, but you can aggregate the result of an earlier aggregate.
+**When to use it:** Multi-step calculations, or filtering on a calculated column.
+
+**Analogy:** A spreadsheet where you **copy a finished summary table** to a new sheet, then calculate on that sheet. The subquery builds the summary, and the outer query works on it.
+
+### Example 1: the average of each manufacturer's top price
+**Step 1: the inner query on its own.** It gives one maximum per manufacturer:
+```sql
+SELECT MAX(price) AS max_price
+FROM phones
+GROUP BY manufacturer;
+```
+**Output (row order may differ):**
+```
+ max_price
+-----------
+       199
+       399
+       299
+(3 rows)
+```
+**Step 2: average that little table:**
+```sql
+SELECT AVG(max_price) AS avg_of_maxes
+FROM (
+  SELECT MAX(price) AS max_price
+  FROM phones
+  GROUP BY manufacturer
+) AS p;
+```
+**Output:**
+```
+    avg_of_maxes
+----------------------
+ 299.0000000000000000
+(1 row)
+```
+`(199 + 399 + 299) / 3 = 299`.
+
+**Why not do it in one step?**
+```sql
+SELECT AVG(MAX(price)) FROM phones GROUP BY manufacturer;
+```
+**Output:**
+```
+ERROR:  aggregate function calls cannot be nested
+```
+
+### Example 2: the most photos any one user has
+```sql
+SELECT MAX(photo_count) AS most_photos
+FROM (
+  SELECT COUNT(*) AS photo_count
+  FROM photos
+  WHERE user_id IS NOT NULL
+  GROUP BY user_id
+) AS counts;
+```
+**Output:**
+```
+ most_photos
+-------------
+           3
+(1 row)
+```
+The inner query counts photos per user (3, 1, 1, 2), and the outer query takes the maximum.
+
+### Example 3: the alias workaround
+You can't use a `SELECT` alias in `WHERE` (topic 17). A subquery in `FROM` fixes that, because the alias becomes a **real column** of the temporary table:
+```sql
+SELECT name, price
+FROM (
+  SELECT name, price, price * units_sold AS revenue
+  FROM phones
+) AS p
+WHERE revenue > 600000;
+```
+**Output:**
+```
+   name    | price
+-----------+-------
+ iPhone 5S |   399
+ Galaxy S5 |   299
+(2 rows)
+```
+
+**Rules for a subquery in `FROM`:**
+
+| Rule | Meaning |
+|---|---|
+| It needs an **alias** | `... ) AS p` |
+| The outer query sees the **inner `SELECT` list's column names** | Give calculated columns aliases (`AS max_price`) |
+| The outer query can only use columns the inner query **selected** | Unselected columns are gone |
+| It can return any shape | One value, a list, or a full table |
+
+**Alias in older versions:**
+```sql
+SELECT AVG(max_price) FROM (SELECT MAX(price) AS max_price FROM phones GROUP BY manufacturer);
+```
+**Output on PostgreSQL 15 and earlier:**
+```
+ERROR:  subquery in FROM must have an alias
+HINT:  For example, FROM (SELECT ...) [AS] foo.
+```
+PostgreSQL 16 and newer allow it to be omitted, but **always write one** so the query works everywhere.
+
+> ⚠️ **Warning:** Column names come from the inner query. Without an alias, `MAX(price)` is named `max`, and `price * units_sold` gets the unhelpful name `?column?`.
+
+> ⚠️ **Warning:** Only the columns you **select inside** the subquery exist outside it. Forgetting one means `ERROR: column "..." does not exist`.
+
+> 🏆 **Golden Rule:** **`FROM (subquery) AS alias` turns a query result into a table you can query again.** Use it for a second round of aggregation or to filter on a calculated column.
