@@ -534,3 +534,137 @@ An aggregate with no `GROUP BY` always returns exactly one row, which is why it'
 > ⚠️ **Warning:** Integer division applies here too. `(SELECT MAX(price) ...) / (SELECT MIN(price) ...)` returns `2`, not `2.01`, unless you cast to `numeric`.
 
 > 🏆 **Golden Rule:** **Put a summary value in `FROM` as a one-row table when you want to use it several times.** It's tidier than repeating the same subquery.
+
+
+
+## 🔗 71. Subqueries in a Join Clause
+
+**What it does:** Joins a table to **the result of a subquery**, instead of joining two real tables. The subquery is written inside the `JOIN`, with an alias.
+**Why it is used:** You can **summarize one table first** (count, total, average), then join that small summary table to another. This also avoids a nasty mistake where joining two "many" tables multiplies your rows.
+**When to use it:** Reports that combine several per-group numbers, like "photos **and** comments per user."
+
+**Analogy:** Preparing two **summary sheets** (one for photos, one for comments), and then lining them up side by side by user. Each sheet is already tidy, so lining them up is simple.
+
+### Example 1: comments per user, with usernames
+```sql
+SELECT u.username, c.comment_count
+FROM users AS u
+JOIN (
+  SELECT user_id, COUNT(*) AS comment_count
+  FROM comments
+  GROUP BY user_id
+) AS c ON c.user_id = u.id;
+```
+**Output (row order may differ):**
+```
+ username  | comment_count
+-----------+---------------
+ monahan93 |             1
+ pferrer   |             5
+ si93onis  |             2
+ 99stroman |             2
+(4 rows)
+```
+`lonelyuser` is missing, because a plain `JOIN` drops users with no comments (topic 42).
+
+### Keep everyone with a `LEFT JOIN` and `COALESCE`
+`COALESCE(a, b)` returns the **first value that isn't `NULL`**, so `COALESCE(NULL, 0)` is `0`.
+```sql
+SELECT u.username, COALESCE(c.comment_count, 0) AS comment_count
+FROM users AS u
+LEFT JOIN (
+  SELECT user_id, COUNT(*) AS comment_count
+  FROM comments
+  GROUP BY user_id
+) AS c ON c.user_id = u.id;
+```
+**Output:**
+```
+  username  | comment_count
+------------+---------------
+ monahan93  |             1
+ pferrer    |             5
+ si93onis   |             2
+ 99stroman  |             2
+ lonelyuser |             0
+(5 rows)
+```
+
+### Example 2: two summaries side by side
+**Photos and comments per user:**
+```sql
+SELECT
+  u.username,
+  COALESCE(p.photo_count, 0) AS photos,
+  COALESCE(c.comment_count, 0) AS comments
+FROM users AS u
+LEFT JOIN (
+  SELECT user_id, COUNT(*) AS photo_count
+  FROM photos
+  GROUP BY user_id
+) AS p ON p.user_id = u.id
+LEFT JOIN (
+  SELECT user_id, COUNT(*) AS comment_count
+  FROM comments
+  GROUP BY user_id
+) AS c ON c.user_id = u.id;
+```
+**Output:**
+```
+  username  | photos | comments
+------------+--------+----------
+ monahan93  |      3 |        1
+ pferrer    |      1 |        5
+ si93onis   |      1 |        2
+ 99stroman  |      2 |        2
+ lonelyuser |      0 |        0
+(5 rows)
+```
+
+### Why summarize first? The row-multiplying trap
+**The tempting version joins both tables directly:**
+```sql
+SELECT u.username, COUNT(p.id) AS photos, COUNT(c.id) AS comments
+FROM users AS u
+LEFT JOIN photos AS p ON p.user_id = u.id
+LEFT JOIN comments AS c ON c.user_id = u.id
+GROUP BY u.id;
+```
+**Output (wrong!):**
+```
+  username  | photos | comments
+------------+--------+----------
+ monahan93  |      3 |        3
+ pferrer    |      5 |        5
+ si93onis   |      2 |        2
+ 99stroman  |      4 |        4
+ lonelyuser |      0 |        0
+(5 rows)
+```
+`pferrer` really has 1 photo and 5 comments, but the join pairs **every photo with every comment** (1 x 5 = 5 rows), so both counts become 5.
+
+| User | Photos x comments | Rows after joining |
+|---|---|---|
+| monahan93 | 3 x 1 | 3 |
+| pferrer | 1 x 5 | 5 |
+| si93onis | 1 x 2 | 2 |
+| 99stroman | 2 x 2 | 4 |
+
+Summarizing each table **before** joining gives each user exactly **one row per summary**, so nothing multiplies.
+
+**Rules for a subquery in `JOIN`:**
+
+| Rule | Meaning |
+|---|---|
+| It needs an **alias** | `... ) AS c` |
+| The `ON` uses the alias | `ON c.user_id = u.id` |
+| Select the **join column** in the subquery | Otherwise `ON` has nothing to match |
+| Works with `JOIN`, `LEFT JOIN`, `RIGHT JOIN`, `FULL JOIN` | Same rules as topics 44 to 48 |
+
+> ⚠️ **Warning:** **Joining two "many" tables to the same parent multiplies rows**, and `COUNT` and `SUM` come out too big with **no error**. Summarize each side first.
+
+> ⚠️ **Warning:** If you forget to select the join column inside the subquery, you get `ERROR: column c.user_id does not exist`.
+
+> ⚠️ **Warning:** After a `LEFT JOIN`, summary columns are `NULL` for unmatched rows. Wrap them in `COALESCE(..., 0)` when you want `0` instead.
+
+> 🏆 **Golden Rule:** **Aggregate first, join second.** A subquery in the `JOIN` gives you one tidy row per key, which keeps your totals correct.
