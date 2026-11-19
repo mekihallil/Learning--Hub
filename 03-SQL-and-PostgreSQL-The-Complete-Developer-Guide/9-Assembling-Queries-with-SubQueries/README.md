@@ -1242,3 +1242,164 @@ JOIN (
 > ⚠️ **Warning:** `NULL` in the linking column never matches (see `lost.jpg`). Decide whether those rows should be included.
 
 > 🏆 **Golden Rule:** **A correlated subquery asks, for every row, "what is the answer for my own group?"** Give each copy of the table its own alias, and test the inner query by replacing the link with a real value.
+
+
+
+
+## 🔂 76. More on Correlated Subqueries
+
+**What it does:** Shows the other places a correlated subquery is useful: **in the `SELECT` list** (adding a per-row value), **in `WHERE` compared against a group average**, and with **`EXISTS` / `NOT EXISTS`** (does a matching row exist at all?).
+**Why it is used:** These cover most real uses. Topic 75 showed the mechanism, and these are the patterns you'll reuse.
+**When to use it:** Per-row lookups, per-group comparisons, and "has at least one" or "has none" tests.
+
+**Analogy:** For every guest at a party, you quickly check **one extra fact about them**: how many drinks they've had, or whether they've arrived at all.
+
+### Pattern 1: a count in the `SELECT` list
+**How many comments does each photo have?**
+```sql
+SELECT
+  p.id,
+  p.url,
+  (SELECT COUNT(*) FROM comments AS c WHERE c.photo_id = p.id) AS comment_count
+FROM photos AS p
+ORDER BY p.id;
+```
+**Output:**
+```
+ id |       url       | comment_count
+----+-----------------+---------------
+  1 | http://one.jpg  |             2
+  2 | http://two.jpg  |             4
+  3 | http://25.jpg   |             1
+  4 | http://36.jpg   |             0
+  5 | http://754.jpg  |             3
+  6 | http://35.jpg   |             0
+  7 | http://256.jpg  |             0
+  8 | http://lost.jpg |             0
+(8 rows)
+```
+Every photo appears, including those with `0` comments. The counts add up to **10**, the total number of comments.
+
+### Pattern 2: the latest related row in the `SELECT` list
+**Show each photo's most recent comment:**
+```sql
+SELECT
+  p.id,
+  p.url,
+  (
+    SELECT c.contents
+    FROM comments AS c
+    WHERE c.photo_id = p.id
+    ORDER BY c.id DESC
+    LIMIT 1
+  ) AS latest_comment
+FROM photos AS p
+ORDER BY p.id;
+```
+**Output:**
+```
+ id |       url       | latest_comment
+----+-----------------+----------------
+  1 | http://one.jpg  | Love this
+  2 | http://two.jpg  | Seen it twice
+  3 | http://25.jpg   | Lovely
+  4 | http://36.jpg   |
+  5 | http://754.jpg  | So cool
+  6 | http://35.jpg   |
+  7 | http://256.jpg  |
+  8 | http://lost.jpg |
+(8 rows)
+```
+`ORDER BY ... LIMIT 1` inside the subquery guarantees **at most one row**, as a `SELECT`-list subquery requires (topic 68). Photos with no comments get `NULL`.
+
+### Pattern 3: compare each row with its own group's average
+**Phones that cost more than their own manufacturer's average:**
+```sql
+SELECT name, manufacturer, price
+FROM phones AS p1
+WHERE p1.price > (
+  SELECT AVG(p2.price)
+  FROM phones AS p2
+  WHERE p2.manufacturer = p1.manufacturer
+);
+```
+**Output:**
+```
+   name    | manufacturer | price
+-----------+--------------+-------
+ Galaxy S5 | Samsung      |   299
+(1 row)
+```
+
+| Manufacturer | Own average | Phones above it |
+|---|---|---|
+| Nokia | 199.00 | none (199 is not above 199) |
+| Apple | 399.00 | none |
+| Samsung | 274.50 | Galaxy S5 (299) |
+
+### Pattern 4: `EXISTS` and `NOT EXISTS`
+`EXISTS (subquery)` is **true if the subquery returns at least one row**, and the columns it selects don't matter. By convention people write `SELECT 1`.
+
+**Photos with at least one comment:**
+```sql
+SELECT p.url
+FROM photos AS p
+WHERE EXISTS (
+  SELECT 1 FROM comments AS c WHERE c.photo_id = p.id
+)
+ORDER BY p.id;
+```
+**Output:**
+```
+      url
+----------------
+ http://one.jpg
+ http://two.jpg
+ http://25.jpg
+ http://754.jpg
+(4 rows)
+```
+
+**Photos with no comments:**
+```sql
+SELECT p.url
+FROM photos AS p
+WHERE NOT EXISTS (
+  SELECT 1 FROM comments AS c WHERE c.photo_id = p.id
+)
+ORDER BY p.id;
+```
+**Output:**
+```
+       url
+-----------------
+ http://36.jpg
+ http://35.jpg
+ http://256.jpg
+ http://lost.jpg
+(4 rows)
+```
+
+**`EXISTS` vs `IN`:**
+
+| | `IN (subquery)` | `EXISTS (subquery)` |
+|---|---|---|
+| **Subquery usually** | Plain, returns a list | Correlated |
+| **Stops early?** | Builds or checks a list | ✅ Can stop at the first match |
+| **`NULL` in the data** | `NOT IN` breaks (topic 73) | `NOT EXISTS` is **safe** |
+| **Good for** | A short fixed list | "Has any related row" tests |
+
+### Where each pattern fits
+| You want... | Use |
+|---|---|
+| An extra column per row (count, latest, total) | Correlated subquery in `SELECT` |
+| Rows above or below **their own group's** value | Correlated subquery in `WHERE` with `>` / `<` / `=` |
+| Rows that have, or lack, any related row | `EXISTS` / `NOT EXISTS` |
+
+> ⚠️ **Warning:** A `SELECT`-list subquery must return **one column and at most one row**. Use an aggregate or `LIMIT 1`.
+
+> ⚠️ **Warning:** `COUNT(*)` returns `0` when nothing matches, but `MAX`, `MIN`, `SUM`, and `AVG` return `NULL`. Wrap in `COALESCE(..., 0)` if you want zeros (topic 71).
+
+> ⚠️ **Warning:** Always `ORDER BY` before `LIMIT 1`. Without it, "the first row" is arbitrary (topic 61).
+
+> 🏆 **Golden Rule:** **Use `EXISTS` / `NOT EXISTS` for "is there any related row?" and a correlated aggregate for "how many / how much / which one?"** Both stay correct when `NULL`s are present.
