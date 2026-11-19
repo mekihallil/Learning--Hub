@@ -1088,3 +1088,157 @@ WHERE price > ALL (SELECT price FROM phones WHERE manufacturer = 'Sony');
 > ⚠️ **Warning:** `ANY`, `SOME`, and `ALL` here are the **comparison operators**. They're unrelated to `UNION ALL` or `COUNT(DISTINCT ...)`, although `ALL` appears in both.
 
 > 🏆 **Golden Rule:** **`ALL` means "every one," `ANY` means "at least one."** For simple cases, `MAX` and `MIN` give the same answer, but `ANY` and `ALL` read closer to plain English.
+
+## 🔁 75. Probably Too Much About Correlated Subqueries
+
+**What it does:** A **correlated subquery** is a subquery that **refers to a column of the outer query**. Because of that link it can't run on its own, and it is re-evaluated **for each outer row**. This topic is the deep dive into how that works.
+**Why it is used:** Some questions compare each row to an answer that is **specific to its own group**: "the priciest phone **of its own manufacturer**." A plain subquery gives one answer for the whole table, which isn't enough.
+**When to use it:** Per-group comparisons such as "top in its group" or "above its own group's average."
+**A note on the title:** this is more detail than you'll need day to day. Read it once, and come back when you hit a "best per group" question.
+
+**Analogy:** A teacher grading on a curve **per class**. For each student, look up only **that student's class**, find the class's top score, and check whether the student matches it.
+
+### The problem: the priciest phone of each manufacturer
+**A plain subquery can't do it.** It finds one maximum for the whole table:
+```sql
+SELECT name, manufacturer, price
+FROM phones
+WHERE price = (SELECT MAX(price) FROM phones);
+```
+**Output:**
+```
+   name    | manufacturer | price
+-----------+--------------+-------
+ iPhone 5S | Apple        |   399
+(1 row)
+```
+That's the priciest phone **overall**, not per manufacturer.
+
+### The correlated version
+```sql
+SELECT name, manufacturer, price
+FROM phones AS p1
+WHERE p1.price = (
+  SELECT MAX(p2.price)
+  FROM phones AS p2
+  WHERE p2.manufacturer = p1.manufacturer
+);
+```
+**Output (row order may differ):**
+```
+   name    | manufacturer | price
+-----------+--------------+-------
+ N1280     | Nokia        |   199
+ iPhone 5S | Apple        |   399
+ Galaxy S5 | Samsung      |   299
+(3 rows)
+```
+
+**The anatomy:**
+```
+FROM phones AS p1                         ← the OUTER query, one row at a time
+WHERE p1.price = (
+  SELECT MAX(p2.price)
+  FROM phones AS p2                       ← the INNER query, its own copy of the table
+  WHERE p2.manufacturer = p1.manufacturer ← the LINK to the current outer row
+)
+```
+The link `p2.manufacturer = p1.manufacturer` is what makes it **correlated**.
+
+### How Postgres works through it, row by row
+| Outer row (`p1`) | Inner query becomes | Inner result | `p1.price = result`? | Kept? |
+|---|---|---|---|---|
+| N1280 (Nokia, 199) | `MAX(price)` where manufacturer = `'Nokia'` | 199 | 199 = 199 | ✅ |
+| iPhone 5S (Apple, 399) | ... `'Apple'` | 399 | 399 = 399 | ✅ |
+| Galaxy S5 (Samsung, 299) | ... `'Samsung'` | 299 | 299 = 299 | ✅ |
+| S5620 Monte (Samsung, 250) | ... `'Samsung'` | 299 | 250 = 299 | ❌ |
+
+(Postgres may optimize this internally, but this is the way to **think** about it.)
+
+### How to debug one: freeze the link
+You can't run the inner query alone, because `p1` doesn't exist there. Replace `p1.manufacturer` with a real value:
+```sql
+SELECT MAX(price) FROM phones WHERE manufacturer = 'Samsung';
+```
+**Output:**
+```
+ max
+-----
+ 299
+```
+If that works, the inner query is fine.
+
+### Plain vs correlated
+| | Plain subquery (topic 66) | Correlated subquery |
+|---|---|---|
+| **Refers to the outer row?** | No | **Yes** |
+| **Can run on its own?** | ✅ Yes | ❌ No |
+| **Evaluated** | Once | Once **per outer row** (conceptually) |
+| **Answer is the same for every row?** | Yes | **No**, it depends on the row |
+
+### The alias bug
+Both the inner and outer query read `phones`. Without aliases Postgres can't tell the two apart:
+```sql
+SELECT name, manufacturer, price
+FROM phones
+WHERE price = (
+  SELECT MAX(price) FROM phones WHERE manufacturer = manufacturer
+);
+```
+**Output (wrong, and no error):**
+```
+   name    | manufacturer | price
+-----------+--------------+-------
+ iPhone 5S | Apple        |   399
+(1 row)
+```
+Inside the subquery, **both** `manufacturer`s mean the inner table, so `manufacturer = manufacturer` is always true. That's the overall maximum again. Always give the two copies different aliases.
+
+### A second example: each user's newest photo
+```sql
+SELECT url, user_id
+FROM photos AS p1
+WHERE p1.id = (
+  SELECT MAX(p2.id)
+  FROM photos AS p2
+  WHERE p2.user_id = p1.user_id
+)
+ORDER BY p1.user_id;
+```
+**Output:**
+```
+      url       | user_id
+----------------+---------
+ http://36.jpg  |       1
+ http://754.jpg |       2
+ http://35.jpg  |       3
+ http://256.jpg |       4
+(4 rows)
+```
+`lost.jpg` (no owner) is missing. For that row `p2.user_id = NULL` is never true, so the inner query finds nothing and returns `NULL`, and `p1.id = NULL` is unknown (topic 11).
+
+### A join can do the same job
+```sql
+SELECT p.name, p.manufacturer, p.price
+FROM phones AS p
+JOIN (
+  SELECT manufacturer, MAX(price) AS max_price
+  FROM phones
+  GROUP BY manufacturer
+) AS m ON m.manufacturer = p.manufacturer AND m.max_price = p.price;
+```
+**Output:** the same three phones. This is the "aggregate first, join second" pattern from topic 71.
+
+| | Correlated subquery | Join to a grouped subquery |
+|---|---|---|
+| **Reads like** | "Match my own group's max" | "Join to a table of each group's max" |
+| **Result** | Same | Same |
+| **Performance on big tables** | Can be slow if it runs per row | Often faster |
+
+> ⚠️ **Warning:** **Ties return several rows.** If two phones share their manufacturer's top price, both are returned. That's correct for "the priciest," but not if you wanted exactly one.
+
+> ⚠️ **Warning:** A correlated subquery can be slow on big tables, because it may run once per row. You'll check how Postgres actually runs a query later, with `EXPLAIN`.
+
+> ⚠️ **Warning:** `NULL` in the linking column never matches (see `lost.jpg`). Decide whether those rows should be included.
+
+> 🏆 **Golden Rule:** **A correlated subquery asks, for every row, "what is the answer for my own group?"** Give each copy of the table its own alias, and test the inner query by replacing the link with a real value.
