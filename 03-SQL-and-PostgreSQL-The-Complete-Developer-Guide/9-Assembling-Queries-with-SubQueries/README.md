@@ -1403,3 +1403,164 @@ ORDER BY p.id;
 > ⚠️ **Warning:** Always `ORDER BY` before `LIMIT 1`. Without it, "the first row" is arbitrary (topic 61).
 
 > 🏆 **Golden Rule:** **Use `EXISTS` / `NOT EXISTS` for "is there any related row?" and a correlated aggregate for "how many / how much / which one?"** Both stay correct when `NULL`s are present.
+
+
+
+
+## 🧮 77. A Select Without a From
+
+**What it does:** In PostgreSQL, `SELECT` doesn't need a `FROM`. It can **calculate and return values directly**: math, text, dates, comparisons, and scalar subqueries.
+**Why it is used:** It's a quick **scratchpad**. You can test an expression, check how a function behaves, or build a one-row summary without touching any table.
+**When to use it:** Trying out a calculation before putting it in a bigger query, checking a type or a cast, or building a small dashboard row from several subqueries.
+
+**Analogy:** A calculator built into the database. You don't need to open a file, you just type the expression and read the answer.
+
+**Math:**
+```sql
+SELECT 1 + 1;
+```
+**Output:**
+```
+ ?column?
+----------
+        2
+(1 row)
+```
+`?column?` is Postgres's name for an unnamed column. Name your own with `AS` (topic 7).
+
+**Integer division and casting (the gotcha from topic 7):**
+```sql
+SELECT 7 / 2 AS int_div, 7::numeric / 2 AS decimal_div;
+```
+**Output:**
+```
+ int_div |     decimal_div
+---------+--------------------
+       3 | 3.5000000000000000
+(1 row)
+```
+
+**Text and functions (topic 9):**
+```sql
+SELECT 'Tokyo' || ', ' || 'Japan' AS place, UPPER('tokyo') AS shout, LENGTH('tokyo') AS letters;
+```
+**Output:**
+```
+     place     | shout | letters
+---------------+-------+---------
+ Tokyo, Japan  | TOKYO |       5
+(1 row)
+```
+
+**Rounding:**
+```sql
+SELECT ROUND(10.0 / 3, 2) AS third;
+```
+**Output:**
+```
+ third
+-------
+  3.33
+(1 row)
+```
+
+**Comparisons return true (`t`) or false (`f`):**
+```sql
+SELECT 5 > 3 AS bigger, 'a' = 'A' AS same_case, NULL IS NULL AS missing;
+```
+**Output:**
+```
+ bigger | same_case | missing
+--------+-----------+---------
+ t      | f         | t
+(1 row)
+```
+This is a fast way to test a `WHERE` condition: `'a' = 'A'` is false, confirming that text comparison is case-sensitive (topic 11).
+
+**The current date and time, and the server version:**
+```sql
+SELECT CURRENT_DATE AS today, NOW() AS right_now;
+```
+**Output (yours will show the current moment):**
+```
+   today    |           right_now
+------------+-------------------------------
+ 2026-11-19 | 2026-11-19 10:30:00.123456+03
+(1 row)
+```
+```sql
+SELECT version();
+```
+(You saw this in topic 1.)
+
+**Several scalar subqueries make a one-row summary:**
+```sql
+SELECT
+  (SELECT COUNT(*) FROM users) AS users,
+  (SELECT COUNT(*) FROM photos) AS photos,
+  (SELECT COUNT(*) FROM comments) AS comments,
+  ROUND(
+    (SELECT COUNT(*) FROM comments)::numeric / (SELECT COUNT(*) FROM photos),
+    2
+  ) AS comments_per_photo;
+```
+**Output:**
+```
+ users | photos | comments | comments_per_photo
+-------+--------+----------+--------------------
+     5 |      8 |       10 |               1.25
+(1 row)
+```
+Each subquery returns one value (topic 67), so each becomes one column.
+
+**A bonus: a quick row generator.**
+```sql
+SELECT generate_series(1, 3) AS n;
+```
+**Output:**
+```
+ n
+---
+ 1
+ 2
+ 3
+(3 rows)
+```
+This is a PostgreSQL feature that returns several rows, handy for building test data.
+
+**What you can't do: use columns, because there's no table.**
+```sql
+SELECT name;
+```
+**Output:**
+```
+ERROR:  column "name" does not exist
+LINE 1: SELECT name;
+               ^
+```
+
+**Integer overflow shows up here too (topic 8):**
+```sql
+SELECT 2147483647 + 1;
+```
+**Output:**
+```
+ERROR:  integer out of range
+```
+Cast to a bigger type (`2147483647::bigint + 1`) when numbers get large.
+
+**Other databases differ:**
+
+| Database | `SELECT 1 + 1` works without `FROM`? |
+|---|---|
+| PostgreSQL | ✅ Yes |
+| MySQL, SQL Server, SQLite | ✅ Yes |
+| Oracle | ❌ Needs `FROM dual` |
+
+> ⚠️ **Warning:** With no `FROM`, there are **no columns** to refer to. Use literals, functions, and subqueries only.
+
+> ⚠️ **Warning:** `SELECT` without `FROM` returns **exactly one row** (unless you use a set-returning function like `generate_series`).
+
+> ⚠️ **Warning:** Unnamed columns show as `?column?`. Always add `AS` when the result matters.
+
+> 🏆 **Golden Rule:** **Use `SELECT <expression>;` as a free calculator.** Test a calculation or a condition on its own before you put it inside a larger query.
