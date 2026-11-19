@@ -1564,3 +1564,184 @@ Cast to a bigger type (`2147483647::bigint + 1`) when numbers get large.
 > ⚠️ **Warning:** Unnamed columns show as `?column?`. Always add `AS` when the result matters.
 
 > 🏆 **Golden Rule:** **Use `SELECT <expression>;` as a free calculator.** Test a calculation or a condition on its own before you put it inside a larger query.
+
+
+
+
+## 📝 78. Exercise Overview and Solution
+
+**What it does:** A five-task exercise covering the whole subquery section, with the **solutions right below each task**. Cover the solutions, try each task, then compare.
+**Why it is used:** Subqueries only click when you choose **where** one goes and **what shape** it returns.
+**When to use it:** After topics 66 to 77.
+
+**The tables to use:** `users`, `photos`, `comments`, and `phones`, with the data from earlier topics.
+
+**How to approach each task:**
+
+| Step | Ask yourself |
+|---|---|
+| 1 | What **shape** does the inner query return: a value, a list, or a table? (topic 67) |
+| 2 | Where does it go: `SELECT`, `FROM`, `JOIN`, or `WHERE`? |
+| 3 | Does it need to **refer to the outer row**? Then it's correlated (topics 75 and 76) |
+
+---
+
+### Task 1: a count per user, with no `JOIN` and no `GROUP BY`
+Print each username and the number of comments they've written, including users with none.
+
+**Expected output:**
+```
+  username  | comment_count
+------------+---------------
+ monahan93  |             1
+ pferrer    |             5
+ si93onis   |             2
+ 99stroman  |             2
+ lonelyuser |             0
+(5 rows)
+```
+**Solution:**
+```sql
+SELECT
+  u.username,
+  (SELECT COUNT(*) FROM comments AS c WHERE c.user_id = u.id) AS comment_count
+FROM users AS u
+ORDER BY u.id;
+```
+A correlated subquery in the `SELECT` list returns one value per user. `COUNT(*)` gives `0` for `lonelyuser`.
+
+---
+
+### Task 2: the latest comment on each photo
+Print the `photo_id` and `contents` of the **most recent** comment (highest `id`) on each commented photo.
+
+**Expected output:**
+```
+ photo_id |   contents
+----------+---------------
+        1 | Love this
+        2 | Seen it twice
+        3 | Lovely
+        5 | So cool
+(4 rows)
+```
+**Solution:**
+```sql
+SELECT c1.photo_id, c1.contents
+FROM comments AS c1
+WHERE c1.id = (
+  SELECT MAX(c2.id)
+  FROM comments AS c2
+  WHERE c2.photo_id = c1.photo_id
+)
+ORDER BY c1.photo_id;
+```
+The same "best per group" pattern as topic 75, with the comments table playing both roles.
+
+---
+
+### Task 3: photos that have an owner but no comments
+Print the `url` of photos whose `user_id` is not `NULL` and that nobody has commented on.
+
+**Expected output:**
+```
+      url
+----------------
+ http://36.jpg
+ http://35.jpg
+ http://256.jpg
+(3 rows)
+```
+**Solution:**
+```sql
+SELECT p.url
+FROM photos AS p
+WHERE p.user_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM comments AS c WHERE c.photo_id = p.id
+  )
+ORDER BY p.id;
+```
+`NOT EXISTS` is safe even if the data later contains `NULL`s. `NOT IN (SELECT photo_id FROM comments)` would work **today**, but breaks silently the day a comment has a `NULL` `photo_id` (topic 73).
+
+---
+
+### Task 4: cheaper than at least one Samsung phone
+Print the name and price of phones that cost **less than at least one** Samsung phone.
+
+**Expected output:**
+```
+    name     | price
+-------------+-------
+ N1280       |   199
+ S5620 Monte |   250
+(2 rows)
+```
+**Solution:**
+```sql
+SELECT name, price
+FROM phones
+WHERE price < ANY (SELECT price FROM phones WHERE manufacturer = 'Samsung')
+ORDER BY price;
+```
+The inner query returns a **list** (299, 250), so `< ANY` fits. Galaxy S5 (299) is not below 299 or 250, so it's out.
+
+---
+
+### Task 5: a one-row summary with no `FROM`
+Print one row with the number of users, photos, and comments, plus the average number of comments per photo rounded to 2 decimals.
+
+**Expected output:**
+```
+ users | photos | comments | comments_per_photo
+-------+--------+----------+--------------------
+     5 |      8 |       10 |               1.25
+(1 row)
+```
+**Solution:**
+```sql
+SELECT
+  (SELECT COUNT(*) FROM users) AS users,
+  (SELECT COUNT(*) FROM photos) AS photos,
+  (SELECT COUNT(*) FROM comments) AS comments,
+  ROUND(
+    (SELECT COUNT(*) FROM comments)::numeric / (SELECT COUNT(*) FROM photos),
+    2
+  ) AS comments_per_photo;
+```
+Four scalar subqueries, no `FROM`. The `::numeric` cast avoids integer division, which would give `1`.
+
+---
+
+### Common mistakes
+| Mistake | What happens |
+|---|---|
+| Forgetting aliases in a self-correlated subquery (Task 2) | Both sides mean the inner table, so you get the wrong result with no error (topic 75) |
+| A `SELECT`-list subquery that can return several rows | `ERROR: more than one row returned by a subquery used as an expression` |
+| `< ANY (subquery with two columns)` | `ERROR: subquery has too many columns` |
+| `NOT IN` over a column containing `NULL` | Returns **no rows**, silently (topic 73) |
+| `(SELECT COUNT(*) ...) / (SELECT COUNT(*) ...)` without a cast | Integer division, `1` instead of `1.25` |
+
+### Which subquery position did each task use?
+| Task | Position | Shape returned | Correlated? |
+|---|---|---|---|
+| 1 | `SELECT` list | Scalar | ✅ Yes |
+| 2 | `WHERE` with `=` | Scalar | ✅ Yes |
+| 3 | `WHERE` with `NOT EXISTS` | Rows (existence test) | ✅ Yes |
+| 4 | `WHERE` with `< ANY` | One-column list | No |
+| 5 | `SELECT` list, no `FROM` | Scalar | No |
+
+### Subquery section recap
+| Position | Shape it must return | Topic |
+|---|---|---|
+| `SELECT` list | One value | 68 |
+| `FROM` | A table (any shape) | 69 and 70 |
+| `JOIN` | A table | 71 |
+| `WHERE` with `=`, `>`, `<` | One value | 72 |
+| `WHERE` with `IN` / `NOT IN` | A one-column list | 72 and 73 |
+| `WHERE` with `ANY` / `ALL` | A one-column list | 74 |
+| `WHERE` with `EXISTS` | Any rows (just whether any exist) | 76 |
+
+> ⚠️ **Warning:** Check each answer against something you can verify, like the comment counts adding up to **10** in Task 1. A subquery can return plausible-looking wrong numbers with no error.
+
+> 🏆 **Golden Rule:** **Before writing a subquery, decide its shape and its position.** Value, list, or table first, then the clause it belongs in.
