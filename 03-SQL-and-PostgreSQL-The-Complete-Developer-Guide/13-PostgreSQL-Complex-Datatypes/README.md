@@ -219,3 +219,86 @@ But **text** that looks like a decimal can't be cast straight to an integer.
 > ⚠️ **Warning:** `pg_typeof('hi')` reports `text` for an untyped string in a `SELECT`, but a string literal is flexible and takes on the type of the column it's compared with or inserted into.
 
 > 🏆 **Golden Rule:** **Use the most specific type that fits the data.** The database then rejects bad values for you.
+
+
+
+## ⚡ 89. Fast Rules on Numeric Data Types
+
+**What it does:** Four quick rules for picking a numeric type, so you don't have to memorize every option.
+**Why it is used:** PostgreSQL has many number types, and the right one depends on **what the number means**, not just how it looks.
+**When to use it:** Every time you add a number column to a table.
+
+**Analogy:** Choosing a container. A small box for a few items (`SMALLINT`), a normal box (`INTEGER`), a huge crate (`BIGINT`), and a precision scale for money (`NUMERIC`).
+
+### The four rules
+| What are you storing? | Use | Example |
+|---|---|---|
+| An **auto-generated id** (primary key) | `SERIAL` | `id SERIAL PRIMARY KEY` |
+| A **whole number** (no decimals) | `INTEGER` | `units_sold INTEGER` |
+| A **decimal that must be exact** (money, totals you add up) | `NUMERIC(precision, scale)` | `price NUMERIC(10, 2)` |
+| A **decimal where tiny rounding is fine** (sensors, science) | `DOUBLE PRECISION` | `temperature DOUBLE PRECISION` |
+
+If it doesn't fit rule 1 or 3 or 4, it's almost certainly rule 2.
+
+### Ranges of the whole-number types
+| Type | Size | Smallest | Largest |
+|---|---|---|---|
+| `SMALLINT` | 2 bytes | -32,768 | 32,767 |
+| `INTEGER` | 4 bytes | -2,147,483,648 | 2,147,483,647 |
+| `BIGINT` | 8 bytes | about -9.2 quintillion | about 9.2 quintillion |
+
+**The `SERIAL` family** (auto-counting ids, topic 26):
+
+| Type | Behaves like | Largest id |
+|---|---|---|
+| `SMALLSERIAL` | `SMALLINT` | 32,767 |
+| `SERIAL` | `INTEGER` | 2,147,483,647 |
+| `BIGSERIAL` | `BIGINT` | about 9.2 quintillion |
+
+`SERIAL` is plenty for most tables (over 2 billion rows). Use `BIGSERIAL` if you expect more.
+
+### Pick the types for a new table
+```sql
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,           -- rule 1: auto id
+  name VARCHAR(100),
+  stock INTEGER,                   -- rule 2: whole number
+  price NUMERIC(10, 2),            -- rule 3: money, exact
+  weight_kg DOUBLE PRECISION       -- rule 4: measurement, tiny error is fine
+);
+```
+**Output:**
+```
+CREATE TABLE
+```
+(You can `DROP TABLE products;` afterwards if you don't want to keep it.)
+
+### What Postgres picks for a number you type
+```sql
+SELECT
+  pg_typeof(5) AS small_whole,
+  pg_typeof(3000000000) AS big_whole,
+  pg_typeof(5.5) AS with_decimal;
+```
+**Output:**
+```
+ small_whole | big_whole | with_decimal
+-------------+-----------+--------------
+ integer     | bigint    | numeric
+(1 row)
+```
+A number too large for `INTEGER` is automatically a `BIGINT`, and a number with a decimal point is a `NUMERIC`.
+
+### A quick decision guide
+| Ask yourself | Answer |
+|---|---|
+| Does it have a decimal point? | No, so `INTEGER` or `SERIAL` |
+| Is it **money** or something you'll add up and compare for exact equality? | `NUMERIC` |
+| Is it a measurement where 0.0000001 doesn't matter? | `DOUBLE PRECISION` |
+| Could it exceed about 2 billion? | `BIGINT` |
+
+> ⚠️ **Warning:** **Never use a float for money.** `DOUBLE PRECISION` and `REAL` store approximations (topic 90).
+
+> ⚠️ **Warning:** `SERIAL` isn't a real type, it's shorthand for "an `INTEGER` plus an auto-counter." Postgres also offers the SQL-standard `GENERATED ... AS IDENTITY` (topic 26).
+
+> 🏆 **Golden Rule:** **Auto id → `SERIAL`. Whole number → `INTEGER`. Exact decimal → `NUMERIC`. Approximate decimal → `DOUBLE PRECISION`.**
