@@ -120,3 +120,70 @@ SELECT manufacturer FROM phones GROUP BY manufacturer;
 > ⚠️ **Warning:** Finding duplicates costs time on big tables. If you can't tell why rows repeat, check for a **join** multiplying them (topic 71) before reaching for `DISTINCT`.
 
 > 🏆 **Golden Rule:** **`DISTINCT` = each different row once.** Use `COUNT(DISTINCT col)` to count different values, and `DISTINCT ON` to keep one row per group.
+
+
+
+## 📝 80. Exercise Overview
+
+**What it does:** A four-task practice exercise on `DISTINCT`, `COUNT(DISTINCT ...)`, and `DISTINCT ON`.
+**Why it is used:** The difference between "all rows," "different rows," and "one row per group" only sticks once you've written the queries yourself.
+**When to use it:** After topic 79. Try all four before reading the solutions in topic 81.
+
+**Tables to use:** `phones` (manufacturer, name, price) and `comments` (photo_id, user_id, contents).
+
+**Task 1.** Print each **different** manufacturer, sorted alphabetically.
+
+**Expected output:**
+```
+ manufacturer
+--------------
+ Apple
+ Nokia
+ Samsung
+(3 rows)
+```
+
+**Task 2.** Print **how many different users** have written a comment.
+
+**Expected output:**
+```
+ commenters
+------------
+          4
+(1 row)
+```
+
+**Task 3.** Print **how many different (photo, user) pairs** exist in `comments`. In other words, count each user-on-photo combination once, however many times that user commented on that photo.
+
+**Expected output:**
+```
+ pairs
+-------
+     9
+(1 row)
+```
+
+**Task 4 (stretch).** For each manufacturer, print the name and price of its **cheapest** phone.
+
+**Expected output:**
+```
+ manufacturer |    name     | price
+--------------+-------------+-------
+ Apple        | iPhone 5S   |   399
+ Nokia        | N1280       |   199
+ Samsung      | S5620 Monte |   250
+(3 rows)
+```
+
+**Hints:**
+
+| Task | Hint |
+|---|---|
+| 1 | Use `DISTINCT`, then `ORDER BY` (topic 59) |
+| 2 | Put `DISTINCT` **inside** the aggregate |
+| 3 | You can't put two columns inside `COUNT(DISTINCT ...)` the simple way. Think about a subquery in `FROM` (topic 69) |
+| 4 | Look at `DISTINCT ON` and which direction to sort the price |
+
+> ⚠️ **Warning:** Check Task 3 by hand against the list in topic 54: the (photo, user) pairs are (1,2), (1,3), (2,2), (2,3), (2,4), (3,2), (5,1), (5,2), (5,4).
+
+> 🏆 **Golden Rule:** **Ask what each row of your answer should represent.** "One row per manufacturer" points to `DISTINCT`, `DISTINCT ON`, or `GROUP BY`.
