@@ -462,3 +462,112 @@ SELECT ROUND(2.5::numeric) AS numeric_round, ROUND(2.5::double precision) AS flo
 > ⚠️ **Warning:** Overflow errors appear **in the middle of a calculation**, not only when storing. `SUM` of many `INTEGER`s is promoted to `BIGINT` automatically, but your own `a * b` is not.
 
 > 🏆 **Golden Rule:** **Exact answers need `NUMERIC`.** If an amount will be added, compared, or shown to a customer, don't store it as a float.
+
+
+
+
+## 🔤 91. Reminder on Character Types
+
+**What it does:** A refresher on the three text types, `CHAR(n)`, `VARCHAR(n)`, and `TEXT`, and when to use each.
+**Why it is used:** They look similar, but they differ on padding, length limits, and what happens when a value is too long.
+**When to use it:** Every time you add a text column.
+
+**Analogy:** `CHAR(5)` is a **fixed-size parking spot**: a short car still takes the whole spot. `VARCHAR(5)` is a spot with a **length limit** but no wasted space. `TEXT` is an open lot with **no limit**.
+
+### The three types
+| Type | Behavior |
+|---|---|
+| `CHAR(n)` | **Fixed length.** Shorter values are padded with spaces up to `n` |
+| `VARCHAR(n)` | **Up to `n` characters.** No padding |
+| `TEXT` | **Any length** (up to about 1 GB) |
+| `VARCHAR` (no number) | Same as `TEXT` |
+
+**In PostgreSQL, all three perform about the same.** There is no speed advantage to `VARCHAR(10)` over `TEXT`.
+
+### `CHAR(n)` pads with spaces
+```sql
+SELECT 'ab'::char(5) AS padded,
+       LENGTH('ab'::char(5)) AS len,
+       OCTET_LENGTH('ab'::char(5)) AS bytes;
+```
+**Output:**
+```
+ padded | len | bytes
+--------+-----+-------
+ ab     |   2 |     5
+(1 row)
+```
+`padded` really holds `ab` plus three trailing spaces (invisible here). `LENGTH` ignores the padding, but it still takes up 5 bytes. This is why most people avoid `CHAR(n)`.
+
+### A too-long value is rejected on insert
+```sql
+CREATE TEMP TABLE codes (code VARCHAR(3));
+INSERT INTO codes (code) VALUES ('abcdef');
+```
+**Output:**
+```
+CREATE TABLE
+ERROR:  value too long for type character varying(3)
+```
+`TEMP` tables disappear when you close your session, so they're good for experiments.
+
+### The explicit-cast surprise
+```sql
+SELECT 'abcdef'::varchar(3) AS cut_short;
+```
+**Output:**
+```
+ cut_short
+-----------
+ abc
+(1 row)
+```
+An **insert** is rejected, but an **explicit cast** silently **truncates**. Don't use a cast to "validate" length.
+
+### Characters vs bytes
+```sql
+SELECT LENGTH('héllo') AS characters, OCTET_LENGTH('héllo') AS bytes;
+```
+**Output:**
+```
+ characters | bytes
+------------+-------
+          5 |     6
+(1 row)
+```
+`VARCHAR(n)` limits **characters**, not bytes. The accent takes two bytes in UTF-8, but it counts as one character. (This assumes a UTF-8 database, which is the common default.)
+
+### Quotes and escaping (a reminder from topic 5)
+```sql
+SELECT 'It''s fine' AS apostrophe;
+```
+**Output:**
+```
+ apostrophe
+------------
+ It's fine
+(1 row)
+```
+Double the single quote inside a text value. Double quotes mean "a column or table name."
+
+### Which one should I use?
+| Situation | Use |
+|---|---|
+| A **hard limit** is part of the rule (a 240-character comment, a 2-letter country code) | `VARCHAR(n)` |
+| No natural limit (a bio, an article, a description) | `TEXT` |
+| Fixed-length codes padded on purpose | Rarely `CHAR(n)`, and usually `VARCHAR(n)` is safer |
+| You aren't sure | `TEXT` |
+
+### Reminders for working with text
+| Tool | Reminder |
+|---|---|
+| Comparisons | `'Delhi' = 'delhi'` is **false**, so use `LOWER()` to ignore case (topics 9 and 11) |
+| Joining | `\|\|` returns `NULL` if any part is `NULL`, while `CONCAT()` ignores it (topic 9) |
+| Sorting | Follows the database's collation, so mixed case and accents can order differently |
+| Numbers as text | `'10'` sorts before `'9'`, so store numbers as numbers |
+
+> ⚠️ **Warning:** A hard length limit becomes a **bug** when real data doesn't fit. Names, addresses, and URLs are longer than people expect. Don't set limits you don't need.
+
+> ⚠️ **Warning:** Changing a `VARCHAR` limit later can be slow on huge tables, and making it **smaller** fails if existing values are too long.
+
+> 🏆 **Golden Rule:** **Use `TEXT` unless a real rule demands a limit.** Then use `VARCHAR(n)`. Avoid `CHAR(n)`.
