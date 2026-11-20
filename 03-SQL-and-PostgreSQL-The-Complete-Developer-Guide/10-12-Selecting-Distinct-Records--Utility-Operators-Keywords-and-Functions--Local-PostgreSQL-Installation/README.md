@@ -386,3 +386,97 @@ ERROR:  invalid input syntax for type integer: "a"
 > ⚠️ **Warning:** All arguments must be the same kind of type, otherwise you get a conversion error.
 
 > 🏆 **Golden Rule:** **`GREATEST(value, floor)` means "at least this much."** Use it to stop calculations from going below a limit.
+
+
+
+## 🔻 83. And the Least Value in a List!
+
+**What it does:** `LEAST(a, b, c, ...)` returns the **smallest** of the values you give it, **within a single row**. It's the mirror image of `GREATEST` (topic 82).
+**Why it is used:** It sets a **cap**: "never let this value go above X."
+**When to use it:** Limiting a discount, capping a score at 100, or picking the smaller of two columns.
+
+**Analogy:** A ride with a **maximum** weight. Whatever you weigh, the number on the sign is never above the limit.
+
+**The basics:**
+```sql
+SELECT LEAST(20, 10, 30) AS smallest;
+```
+**Output:**
+```
+ smallest
+----------
+       10
+(1 row)
+```
+
+### A cap at 300
+**Show each phone's price, but never show more than 300:**
+```sql
+SELECT name, price, LEAST(price, 300) AS capped_price
+FROM phones;
+```
+**Output:**
+```
+    name     | price | capped_price
+-------------+-------+--------------
+ N1280       |   199 |          199
+ iPhone 5S   |   399 |          300
+ Galaxy S5   |   299 |          299
+ S5620 Monte |   250 |          250
+(4 rows)
+```
+Only the iPhone (399) exceeds the cap, so it's brought **down** to 300.
+
+### Floor and cap together (clamping)
+Wrap one inside the other to force a value into a range:
+```sql
+SELECT name, price, LEAST(GREATEST(price, 200), 300) AS clamped
+FROM phones;
+```
+**Output:**
+```
+    name     | price | clamped
+-------------+-------+---------
+ N1280       |   199 |     200
+ iPhone 5S   |   399 |     300
+ Galaxy S5   |   299 |     299
+ S5620 Monte |   250 |     250
+(4 rows)
+```
+`GREATEST(price, 200)` lifts anything under 200 up to 200, and `LEAST(..., 300)` brings anything over 300 down to 300.
+
+### Which one to use?
+| You want... | Use | Example |
+|---|---|---|
+| A **minimum** value (a floor) | `GREATEST` | `GREATEST(price, 200)` |
+| A **maximum** value (a cap) | `LEAST` | `LEAST(price, 300)` |
+| Both | Nest them | `LEAST(GREATEST(price, 200), 300)` |
+
+This feels backwards at first: the **floor** uses the **bigger** function, and the **cap** uses the **smaller** one. Think of it as the winner: `GREATEST(x, 200)` returns 200 whenever 200 is bigger, so the result can't go below 200.
+
+### `LEAST` vs `MIN`
+| | `LEAST(a, b, c)` | `MIN(column)` |
+|---|---|---|
+| **Compares** | Values within **one row** | Values across **many rows** |
+| **Returns** | One value per row | One value per group or table |
+
+### Text and `NULL`
+```sql
+SELECT LEAST('apple', 'cherry', 'banana') AS first_alphabetically,
+       LEAST(5, NULL, 8) AS ignores_null,
+       LEAST(NULL, NULL) AS all_null;
+```
+**Output:**
+```
+ first_alphabetically | ignores_null | all_null
+----------------------+--------------+----------
+ apple                |            5 |
+(1 row)
+```
+Like `GREATEST`, `LEAST` **ignores `NULL`s** and returns `NULL` only if all arguments are `NULL`.
+
+> ⚠️ **Warning:** `LEAST` and `GREATEST` are easy to mix up. Remember: `LEAST(x, 300)` can **never exceed 300**, and `GREATEST(x, 200)` can **never go below 200**.
+
+> ⚠️ **Warning:** Ignoring `NULL`s can hide missing data. `LEAST(price, NULL)` quietly returns `price`. Check for `NULL`s if that matters.
+
+> 🏆 **Golden Rule:** **`LEAST(value, limit)` = "at most this much."** Pair it with `GREATEST` to keep a value inside a range.
