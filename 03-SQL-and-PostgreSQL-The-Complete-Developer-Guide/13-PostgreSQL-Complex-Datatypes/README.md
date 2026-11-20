@@ -103,3 +103,119 @@ So far you've **used** data. The next topics look at what you can **store**: the
 > ⚠️ **Warning:** Skills fade without practice. Re-run a few earlier queries, change one thing, and predict the result **before** running it.
 
 > 🏆 **Golden Rule:** **Know the running order.** `FROM`, `WHERE`, `GROUP BY`, `HAVING`, `SELECT`, `ORDER BY`, `LIMIT`. Almost every SQL puzzle becomes clear once you ask "which step am I at?"
+
+
+
+## 🏷️ 88. Data Types
+
+**What it does:** A data type tells Postgres **what kind of value** a column holds (whole number, decimal, text, true/false, date) and what you're allowed to do with it.
+**Why it is used:** Types protect your data. A `price` column can't accept the word `cheap`, and a date column can't accept `February 30th`. Types also decide how much space values use and how they sort and compare.
+**When to use it:** Every time you write `CREATE TABLE`, and every time you wonder "why did this calculation give a strange answer?"
+
+**Analogy:** Different kinds of containers. A measuring cup (number), a label maker (text), a light switch (boolean), and a calendar (date). Putting the wrong thing in the wrong container either fails or gives nonsense.
+
+### The families you'll use most
+| Family | Types | Topic |
+|---|---|---|
+| **Numbers** | `SMALLINT`, `INTEGER`, `BIGINT`, `NUMERIC`, `REAL`, `DOUBLE PRECISION`, `SERIAL` | 89 and 90 |
+| **Text** | `CHAR(n)`, `VARCHAR(n)`, `TEXT` | 91 |
+| **True/false** | `BOOLEAN` | 92 |
+| **Dates and times** | `DATE`, `TIME`, `TIMESTAMP`, `TIMESTAMPTZ` | 93 |
+| **Durations** | `INTERVAL` | 94 |
+
+PostgreSQL also has many more (`UUID`, `JSONB`, arrays, `ENUM`, and so on), which you can learn when you need them.
+
+### Ask Postgres what type a value is
+```sql
+SELECT
+  pg_typeof(1) AS whole,
+  pg_typeof(1.5) AS decimal,
+  pg_typeof('hi') AS words,
+  pg_typeof(true) AS flag,
+  pg_typeof(CURRENT_DATE) AS day,
+  pg_typeof(NOW()) AS moment;
+```
+**Output:**
+```
+  whole  | decimal | words | flag    | day  |          moment
+---------+---------+-------+---------+------+--------------------------
+ integer | numeric | text  | boolean | date | timestamp with time zone
+(1 row)
+```
+`pg_typeof(...)` is a handy way to check what Postgres thinks a value is.
+
+### The type is checked every time you write data
+```sql
+INSERT INTO phones (name, price) VALUES ('Test', 'cheap');
+```
+**Output:**
+```
+ERROR:  invalid input syntax for type integer: "cheap"
+LINE 1: INSERT INTO phones (name, price) VALUES ('Test', 'cheap');
+                                                          ^
+```
+Postgres refused, and nothing was inserted.
+
+### Converting between types (casting)
+Two spellings do the same thing:
+```sql
+SELECT '42'::integer + 1 AS with_colons, CAST('42' AS integer) + 1 AS with_cast;
+```
+**Output:**
+```
+ with_colons | with_cast
+-------------+-----------
+          43 |        43
+(1 row)
+```
+`::` is the short PostgreSQL form. `CAST(... AS ...)` is standard SQL and works in every database.
+
+**Casting has rules:**
+```sql
+SELECT 3.7::integer AS rounded;
+```
+**Output:**
+```
+ rounded
+---------
+       4
+(1 row)
+```
+A decimal cast to an integer is **rounded**, not chopped.
+```sql
+SELECT '3.7'::integer;
+```
+**Output:**
+```
+ERROR:  invalid input syntax for type integer: "3.7"
+```
+But **text** that looks like a decimal can't be cast straight to an integer.
+
+### How to see a table's types
+```sql
+\d phones
+```
+**Output:**
+```
+                    Table "public.phones"
+    Column    |         Type          | Collation | Nullable | Default
+--------------+-----------------------+-----------+----------+---------
+ name         | character varying(50) |           |          |
+ manufacturer | character varying(50) |           |          |
+ price        | integer               |           |          |
+ units_sold   | integer               |           |          |
+```
+
+### Why choosing well matters
+| Wrong choice | Consequence |
+|---|---|
+| Money stored as a float | Rounding errors (topic 90) |
+| A number stored as text | Sorts wrongly (`'10'` before `'9'`) and can't be summed |
+| A date stored as text | No date maths, no validation |
+| A flag stored as `'yes'`/`'no'` text | Typos like `'Yes '` and `'yess'` slip in |
+
+> ⚠️ **Warning:** Changing a column's type **after** the table holds data is possible but needs care. Choose well at the start (topic 2).
+
+> ⚠️ **Warning:** `pg_typeof('hi')` reports `text` for an untyped string in a `SELECT`, but a string literal is flexible and takes on the type of the column it's compared with or inserted into.
+
+> 🏆 **Golden Rule:** **Use the most specific type that fits the data.** The database then rejects bad values for you.
