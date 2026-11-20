@@ -749,3 +749,214 @@ CREATE TABLE accounts (
 > ⚠️ **Warning:** Never write `= NULL` (topic 11). Use `IS NULL`.
 
 > 🏆 **Golden Rule:** **A boolean has three possible states.** Decide what `NULL` means, or forbid it with `NOT NULL DEFAULT ...`.
+
+
+## 📅 93. Times, Dates, and Timestamps
+
+**What it does:** Covers the types that store **when** something happens: `DATE`, `TIME`, `TIMESTAMP`, and `TIMESTAMPTZ`, plus the functions for working with them.
+**Why it is used:** Almost every app records when things happen: when a user signed up, when a photo was posted, when an order shipped.
+**When to use it:** Any column that records or schedules a moment in time.
+
+**Analogy:** A `DATE` is a **page of a wall calendar**. A `TIME` is a **clock face**. A `TIMESTAMP` is **both together**. A `TIMESTAMPTZ` is both together **plus the knowledge of which time zone you were in**.
+
+### The four types
+| Type | Stores | Example |
+|---|---|---|
+| `DATE` | A calendar day | `2026-11-20` |
+| `TIME` | A time of day | `14:30:00` |
+| `TIMESTAMP` | Date and time, **no** time zone | `2026-11-20 14:30:00` |
+| `TIMESTAMPTZ` | Date and time, **with** time zone | `2026-11-20 14:30:00+00` |
+
+`TIMESTAMPTZ` is the long form of `TIMESTAMP WITH TIME ZONE`.
+
+### Writing values: use the ISO format
+```sql
+SELECT
+  '2026-11-20'::date AS a_date,
+  '14:30:00'::time AS a_time,
+  '2026-11-20 14:30:00'::timestamp AS a_timestamp;
+```
+**Output:**
+```
+   a_date   | a_time   |     a_timestamp
+------------+----------+---------------------
+ 2026-11-20 | 14:30:00 | 2026-11-20 14:30:00
+(1 row)
+```
+The safe format is **year-month-day** (`YYYY-MM-DD`). It can't be misread.
+
+**Other formats are ambiguous:**
+```sql
+SHOW DateStyle;
+```
+**Output:**
+```
+ DateStyle
+-----------
+ ISO, MDY
+(1 row)
+```
+With `MDY`, `'03/04/2026'` means **March 4**. Under a `DMY` setting it would mean April 3.
+
+**Impossible dates are rejected:**
+```sql
+SELECT '2026-02-30'::date;
+```
+**Output:**
+```
+ERROR:  date/time field value out of range: "2026-02-30"
+```
+
+### `TIMESTAMP` vs `TIMESTAMPTZ`
+| | `TIMESTAMP` | `TIMESTAMPTZ` |
+|---|---|---|
+| **Stores** | The exact clock reading you gave | An **exact moment** (internally in UTC) |
+| **Display** | Always the same | Converted to **your session's time zone** |
+| **Best for** | Local schedules ("store opens at 09:00") | **Anything that happened**, like `created_at` |
+
+**The same moment, shown in different time zones:**
+```sql
+SET TIME ZONE 'UTC';
+SELECT '2026-11-20 12:00:00+00'::timestamptz AS moment;
+```
+**Output:**
+```
+SET
+         moment
+------------------------
+ 2026-11-20 12:00:00+00
+(1 row)
+```
+```sql
+SET TIME ZONE 'America/New_York';
+SELECT '2026-11-20 12:00:00+00'::timestamptz AS moment;
+```
+**Output:**
+```
+SET
+         moment
+------------------------
+ 2026-11-20 07:00:00-05
+(1 row)
+```
+```sql
+SET TIME ZONE 'Asia/Tokyo';
+SELECT '2026-11-20 12:00:00+00'::timestamptz AS moment;
+```
+**Output:**
+```
+SET
+         moment
+------------------------
+ 2026-11-20 21:00:00+09
+(1 row)
+```
+All three are the **same instant**, just displayed differently. Put things back afterwards:
+```sql
+RESET TIME ZONE;
+```
+**Output:**
+```
+RESET
+```
+`SET TIME ZONE` only affects your **current session**.
+
+### Getting the current date and time
+```sql
+SELECT CURRENT_DATE AS today, NOW() AS right_now;
+```
+**Output (yours shows the real current moment):**
+```
+   today    |           right_now
+------------+-------------------------------
+ 2026-11-20 | 2026-11-20 10:30:00.123456+00
+(1 row)
+```
+
+### Pulling parts out with `EXTRACT`
+```sql
+SELECT
+  EXTRACT(YEAR FROM DATE '2026-11-20') AS year,
+  EXTRACT(MONTH FROM DATE '2026-11-20') AS month,
+  EXTRACT(DOW FROM DATE '2026-11-20') AS day_of_week;
+```
+**Output:**
+```
+ year | month | day_of_week
+------+-------+-------------
+ 2026 |    11 |           5
+(1 row)
+```
+`DOW` counts **Sunday as 0**, so `5` is Friday.
+
+### Rounding down with `DATE_TRUNC`
+```sql
+SELECT DATE_TRUNC('month', TIMESTAMP '2026-11-20 14:30:00') AS month_start;
+```
+**Output:**
+```
+     month_start
+---------------------
+ 2026-11-01 00:00:00
+(1 row)
+```
+Useful for grouping by day, month, or year.
+
+### Formatting with `TO_CHAR`
+```sql
+SELECT TO_CHAR(DATE '2026-11-20', 'FMDay, DD Mon YYYY') AS pretty;
+```
+**Output:**
+```
+        pretty
+----------------------
+ Friday, 20 Nov 2026
+(1 row)
+```
+`FM` removes the extra padding spaces.
+
+### Date arithmetic
+```sql
+SELECT
+  DATE '2026-12-25' - DATE '2026-11-20' AS days_until,
+  DATE '2026-11-20' + 30 AS thirty_days_later;
+```
+**Output:**
+```
+ days_until | thirty_days_later
+------------+-------------------
+         35 | 2026-12-20
+(1 row)
+```
+Subtracting two `DATE`s gives a **whole number of days**. Adding an integer to a `DATE` adds days. For richer durations, see `INTERVAL` (topic 94).
+
+### Filtering by date
+```sql
+CREATE TEMP TABLE events (name VARCHAR(50), event_date DATE);
+
+INSERT INTO events (name, event_date)
+VALUES ('Kickoff', '2026-11-05'), ('Review', '2026-11-20'), ('Launch', '2026-12-10');
+
+SELECT name, event_date
+FROM events
+WHERE event_date BETWEEN '2026-11-01' AND '2026-11-30'
+ORDER BY event_date;
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 3
+  name   | event_date
+---------+------------
+ Kickoff | 2026-11-05
+ Review  | 2026-11-20
+(2 rows)
+```
+
+> ⚠️ **Warning:** **For "when did this happen" columns, use `TIMESTAMPTZ`.** A plain `TIMESTAMP` has no time zone, so the same value can mean different moments to different people.
+
+> ⚠️ **Warning:** Avoid `TIME WITH TIME ZONE`. A time of day without a date can't handle daylight saving properly.
+
+> ⚠️ **Warning:** `BETWEEN` includes **both ends**. Comparing a `TIMESTAMP` against `'2026-11-30'` means midnight at the **start** of that day, so events later on the 30th are missed.
+
+> 🏆 **Golden Rule:** **Write dates as `YYYY-MM-DD`, store moments as `TIMESTAMPTZ`, and let the database do the date maths.**
