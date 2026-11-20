@@ -480,3 +480,175 @@ Like `GREATEST`, `LEAST` **ignores `NULL`s** and returns `NULL` only if all argu
 > ⚠️ **Warning:** Ignoring `NULL`s can hide missing data. `LEAST(price, NULL)` quietly returns `price`. Check for `NULL`s if that matters.
 
 > 🏆 **Golden Rule:** **`LEAST(value, limit)` = "at most this much."** Pair it with `GREATEST` to keep a value inside a range.
+
+
+
+
+## 🔀 84. The Case Keyword
+
+**What it does:** `CASE` is SQL's **if / else if / else**. It checks conditions in order and returns the value of the **first one that is true**.
+**Why it is used:** It lets a query produce different values for different rows: labels, categories, or conditional counts.
+**When to use it:** Turning numbers into labels, replacing codes with readable text, and counting or summing only some rows.
+
+**Analogy:** A traffic light controller reading a list of rules from the top: "if red, stop; else if yellow, slow; else go." It acts on the **first rule that matches** and ignores the rest.
+
+### Searched `CASE` (the flexible form)
+```sql
+SELECT
+  name,
+  price,
+  CASE
+    WHEN price > 300 THEN 'high'
+    WHEN price > 200 THEN 'medium'
+    ELSE 'low'
+  END AS tier
+FROM phones;
+```
+**Output:**
+```
+    name     | price | tier
+-------------+-------+--------
+ N1280       |   199 | low
+ iPhone 5S   |   399 | high
+ Galaxy S5   |   299 | medium
+ S5620 Monte |   250 | medium
+(4 rows)
+```
+
+| Part | Meaning |
+|---|---|
+| `CASE` | Start |
+| `WHEN condition THEN value` | If true, return this value |
+| `ELSE value` | If nothing matched, return this |
+| `END` | Finish (forgetting it is a syntax error) |
+
+### Simple `CASE` (compare one column to values)
+```sql
+SELECT
+  name,
+  CASE manufacturer
+    WHEN 'Apple' THEN 'United States'
+    WHEN 'Nokia' THEN 'Finland'
+    WHEN 'Samsung' THEN 'South Korea'
+    ELSE 'Unknown'
+  END AS country
+FROM phones;
+```
+**Output:**
+```
+    name     |    country
+-------------+---------------
+ N1280       | Finland
+ iPhone 5S   | United States
+ Galaxy S5   | South Korea
+ S5620 Monte | South Korea
+(4 rows)
+```
+This is shorthand for repeated `WHEN manufacturer = '...'` tests.
+
+### Without `ELSE`, unmatched rows get `NULL`
+```sql
+SELECT name, CASE WHEN price > 300 THEN 'high' END AS tier FROM phones;
+```
+**Output:**
+```
+    name     | tier
+-------------+------
+ N1280       |
+ iPhone 5S   | high
+ Galaxy S5   |
+ S5620 Monte |
+(4 rows)
+```
+
+### Order matters: the first true `WHEN` wins
+```sql
+SELECT name, price,
+  CASE
+    WHEN price > 200 THEN 'medium'
+    WHEN price > 300 THEN 'high'
+    ELSE 'low'
+  END AS tier
+FROM phones;
+```
+**Output (wrong!):**
+```
+    name     | price |  tier
+-------------+-------+--------
+ N1280       |   199 | low
+ iPhone 5S   |   399 | medium
+ Galaxy S5   |   299 | medium
+ S5620 Monte |   250 | medium
+(4 rows)
+```
+The iPhone (399) matches `> 200` first, so it never reaches the `> 300` test. **Put the most specific test first.**
+
+### `CASE` in a grouped query
+```sql
+SELECT
+  CASE WHEN user_id IS NULL THEN 'orphan' ELSE 'owned' END AS status,
+  COUNT(*) AS photos
+FROM photos
+GROUP BY status;
+```
+**Output (row order may differ):**
+```
+ status | photos
+--------+--------
+ owned  |      7
+ orphan |      1
+(2 rows)
+```
+PostgreSQL lets `GROUP BY` use the output alias here, which `WHERE` and `HAVING` can't.
+
+### Conditional counting: several totals in one pass
+```sql
+SELECT
+  COUNT(CASE WHEN price > 300 THEN 1 END) AS pricey,
+  COUNT(CASE WHEN price <= 300 THEN 1 END) AS affordable
+FROM phones;
+```
+**Output:**
+```
+ pricey | affordable
+--------+------------
+      1 |          3
+(1 row)
+```
+Rows that don't match return `NULL`, and `COUNT` skips `NULL`s (topic 53).
+
+**The PostgreSQL shortcut for the same thing:**
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE price > 300) AS pricey,
+  COUNT(*) FILTER (WHERE price <= 300) AS affordable
+FROM phones;
+```
+The same output. `FILTER` is PostgreSQL-friendly, but `CASE` works in every database.
+
+### Every branch must return a compatible type
+```sql
+SELECT CASE WHEN price > 300 THEN 'high' ELSE 0 END FROM phones;
+```
+**Output:**
+```
+ERROR:  invalid input syntax for type integer: "high"
+```
+Text and numbers can't share one result column.
+
+**Where `CASE` can appear:**
+
+| Place | Use |
+|---|---|
+| `SELECT` list | Labels and categories |
+| Inside an aggregate | Conditional `COUNT` and `SUM` |
+| `ORDER BY` | Custom sort orders |
+| `WHERE` | Rare, but allowed |
+
+> ⚠️ **Warning:** `CASE` stops at the **first true** `WHEN`. List specific conditions before general ones.
+
+> ⚠️ **Warning:** Always add an `ELSE`, unless you actually want `NULL` for unmatched rows.
+
+> ⚠️ **Warning:** A simple `CASE x WHEN NULL THEN ...` **never matches**, because `NULL = NULL` isn't true (topic 11). Use `CASE WHEN x IS NULL THEN ...`.
+
+> 🏆 **Golden Rule:** **`CASE` is a column-sized `if / else if / else`.** Write conditions from most specific to least, include an `ELSE`, and end with `END`.
