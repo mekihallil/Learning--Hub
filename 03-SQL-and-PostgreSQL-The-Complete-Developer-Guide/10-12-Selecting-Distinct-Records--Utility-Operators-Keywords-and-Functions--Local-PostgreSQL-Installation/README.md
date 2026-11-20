@@ -837,3 +837,112 @@ You are now connected to database "photo_app" as user "postgres".
 > ⚠️ **Warning:** Installer screens and package names change between versions. If a step doesn't match, follow the [official download page](https://www.postgresql.org/download/) for your system.
 
 > 🏆 **Golden Rule:** **Install, verify with `SELECT version();`, then create a practice database.** If you can connect and run a query, you're ready.
+
+
+
+
+## 🖥️ 86. pgAdmin 4 Setup on macOS, Linux and Windows
+
+**What it does:** **pgAdmin 4** is a free, graphical tool for PostgreSQL. You connect it to your server and then browse databases, run queries in an editor, and view tables, all in a window.
+**Why it is used:** `psql` is fast but text-only. pgAdmin shows results in a grid, remembers your queries, and can draw your tables and their links.
+**When to use it:** Whenever you'd rather click than type commands, or want to see your schema visually.
+
+**Analogy:** `psql` is a command-line chat with the database. pgAdmin is the full control room with screens and buttons. Both talk to the same server.
+
+> **Tip:** Like topic 85, this is a setup topic. You may want it in a **"Getting Started"** section at the top of your README.
+
+**Before you begin:** PostgreSQL must be installed and running (topic 85), and you need the `postgres` **password**.
+
+---
+
+### 🪟 Windows
+pgAdmin 4 is **already installed** if you used the EDB installer in topic 85. Find **pgAdmin 4** in the Start menu.
+To install it on its own, download it from [pgadmin.org/download](https://www.pgadmin.org/download/).
+
+### 🍎 macOS
+- **EDB installer:** pgAdmin is included.
+- **Standalone:** download the `.dmg` from [pgadmin.org/download](https://www.pgadmin.org/download/pgadmin-4-macos/), open it, and drag the app to **Applications**.
+- **Homebrew:**
+```bash
+brew install --cask pgadmin4
+```
+
+### 🐧 Linux
+pgAdmin comes from its **own repository**. The exact repository setup commands are on [pgadmin.org/download](https://www.pgadmin.org/download/) (Debian/Ubuntu and RPM-based pages), and they change over time, so copy them from there. After the repository is added, you choose a package:
+
+| Package (Debian/Ubuntu) | What you get |
+|---|---|
+| `pgadmin4-desktop` | A normal desktop app |
+| `pgadmin4-web` | A web version served by a web server (run `sudo /usr/pgadmin4/bin/setup-web.sh` after installing) |
+| `pgadmin4` | Both |
+
+```bash
+sudo apt install pgadmin4-desktop
+```
+RPM-based systems use `dnf install pgadmin4-desktop` (or `pgadmin4-web`).
+
+---
+
+### First launch
+pgAdmin may ask you to set a **master password** (in desktop mode). This encrypts the connection passwords pgAdmin saves. It's separate from your database password.
+
+### Register your server
+**Step 1.** In the left panel, right-click **Servers**, then choose **Register**, then **Server...**.
+**Step 2.** On the **General** tab, give it a **Name**, for example `Local Postgres`.
+**Step 3.** On the **Connection** tab, fill in:
+
+| Field | Value |
+|---|---|
+| Host name/address | `localhost` |
+| Port | `5432` |
+| Maintenance database | `postgres` |
+| Username | `postgres` (on Homebrew, your macOS username) |
+| Password | The password you set in topic 85 |
+
+**Step 4.** Tick **Save password** if you like, then click **Save**.
+
+A new entry appears under **Servers**. Expand it to see `Databases`, including `photo_app` if you created it.
+
+### Run your first query
+**Step 1.** Expand **Servers**, then **Local Postgres**, then **Databases**.
+**Step 2.** Right-click **photo_app** and choose **Query Tool**.
+**Step 3.** Type a query:
+```sql
+SELECT version();
+```
+**Step 4.** Press the **Execute** (play) button, or **F5**.
+
+**Output (shown in the grid below the editor):**
+```
+version
+------------------------------------------------------------
+PostgreSQL 18.x on ...
+```
+
+### Handy things to try
+| Feature | Where | What it's for |
+|---|---|---|
+| Create a database | Right-click **Databases**, then **Create**, then **Database...** | The click version of `CREATE DATABASE` |
+| Browse tables | **Databases > photo_app > Schemas > public > Tables** | See every table you've created |
+| View rows | Right-click a table, then **View/Edit Data**, then **All Rows** | Same as `SELECT *` |
+| ERD Tool | Right-click a database, then **ERD For Database** (or the **Tools** menu) | Draws your tables and their foreign keys (topics 21 to 27) |
+| Query history | Bottom panel of the Query Tool | Find a query you ran earlier |
+| Explain | The **Explain** button in the Query Tool | Shows how Postgres will run a query |
+
+### Troubleshooting
+| Problem | Fix |
+|---|---|
+| `Connection refused` or a timeout | The PostgreSQL server isn't running. Start it (topic 85) |
+| `password authentication failed` | Wrong password. Reset it in `psql` with `ALTER USER postgres PASSWORD '...';` |
+| Works in `psql` but not pgAdmin (Linux) | `sudo -u postgres psql` can log in **without** a password, but pgAdmin connects over the network and **needs one**. Set it with `ALTER USER` |
+| No `photo_app` listed | Right-click **Databases** and choose **Refresh**, or create it |
+| Server won't register on port `5432` | Check which port Postgres is using (the installer may have chosen another one) |
+| Forgot the pgAdmin master password | You can reset it from the pgAdmin password prompt, but saved server passwords are lost, so re-enter them |
+
+> ⚠️ **Warning:** Statements you run in the Query Tool normally take effect **immediately** (auto-commit is on by default). An `UPDATE` or `DELETE` without a `WHERE` is just as dangerous here as in `psql` (topics 18 and 19).
+
+> ⚠️ **Warning:** Saving passwords is convenient on your own laptop. On a shared computer, leave **Save password** unticked.
+
+> ⚠️ **Warning:** The pgAdmin master password and the `postgres` database password are **two different passwords**.
+
+> 🏆 **Golden Rule:** **Register the server once, open the Query Tool on your practice database, and run `SELECT version();`.** When that works, every query in these notes can be run and tested yourself.
