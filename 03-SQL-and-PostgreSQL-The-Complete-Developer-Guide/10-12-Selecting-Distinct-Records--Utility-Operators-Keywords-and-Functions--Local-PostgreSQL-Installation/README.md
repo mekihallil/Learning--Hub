@@ -281,3 +281,108 @@ ORDER BY manufacturer, price;
 > ⚠️ **Warning:** The `ORDER BY` of a `DISTINCT ON` query **must start with the same expression** as the `ON (...)`. After that you choose how ties are broken.
 
 > 🏆 **Golden Rule:** **`DISTINCT` inside an aggregate counts different values. `DISTINCT ON` plus a matching `ORDER BY` picks one row per group.**
+
+
+
+
+## 🔝 82. The Greatest Value in a List
+
+**What it does:** `GREATEST(a, b, c, ...)` returns the **largest** of the values you give it, **within a single row**.
+**Why it is used:** It sets a **floor**: "never let this value drop below X." It also compares several columns of the same row.
+**When to use it:** Preventing negative numbers, enforcing a minimum price, or picking the larger of two columns.
+
+**Analogy:** A bouncer who says "you must be **at least** this tall." Whatever your height, the result is never below the line.
+
+**The basics:**
+```sql
+SELECT GREATEST(20, 10, 30) AS biggest;
+```
+**Output:**
+```
+ biggest
+---------
+      30
+(1 row)
+```
+It works on text and dates too:
+```sql
+SELECT GREATEST('apple', 'cherry', 'banana') AS last_alphabetically;
+```
+**Output:**
+```
+ last_alphabetically
+---------------------
+ cherry
+(1 row)
+```
+
+### A floor at zero
+**How many units did each phone sell above 2,000? Never show a negative number.**
+```sql
+SELECT name, units_sold, GREATEST(units_sold - 2000, 0) AS above_2000
+FROM phones;
+```
+**Output:**
+```
+    name     | units_sold | above_2000
+-------------+------------+------------
+ N1280       |       1925 |          0
+ iPhone 5S   |       9436 |       7436
+ Galaxy S5   |       2359 |        359
+ S5620 Monte |       2385 |        385
+(4 rows)
+```
+N1280 sold 1925, so `1925 - 2000 = -75`, and `GREATEST(-75, 0)` gives `0`.
+
+### `GREATEST` vs `MAX`
+They sound alike, but work in different directions:
+
+| | `GREATEST(a, b, c)` | `MAX(column)` |
+|---|---|---|
+| **Compares** | Values **within one row** | Values **across many rows** |
+| **Returns** | One value **per row** | One value **for the whole group or table** |
+| **Type** | Ordinary function | Aggregate function (topic 51) |
+| **Example** | `GREATEST(price, 250)` | `MAX(price)` |
+
+```sql
+SELECT MAX(price) AS top_price, GREATEST(MIN(price), 250) AS floor_price FROM phones;
+```
+**Output:**
+```
+ top_price | floor_price
+-----------+-------------
+       399 |         250
+(1 row)
+```
+`MIN(price)` is 199, and `GREATEST(199, 250)` lifts it to 250.
+
+### How it treats `NULL`
+In PostgreSQL, `GREATEST` **ignores `NULL`s**. It returns `NULL` only when **every** value is `NULL`.
+```sql
+SELECT GREATEST(5, NULL, 8) AS ignores_null, GREATEST(NULL, NULL) AS all_null;
+```
+**Output:**
+```
+ ignores_null | all_null
+--------------+----------
+            8 |
+(1 row)
+```
+This differs from `+` and `||`, where a single `NULL` poisons the result (topics 7 and 9).
+
+### The values must be compatible
+```sql
+SELECT GREATEST(1, 'a');
+```
+**Output:**
+```
+ERROR:  invalid input syntax for type integer: "a"
+```
+
+> ⚠️ **Warning:** `GREATEST` raises a value **up to** at least the floor. People often reach for it expecting a **cap**, but a cap needs `LEAST` (topic 83).
+
+> ⚠️ **Warning:** Other databases handle `NULL` differently (MySQL returns `NULL` if **any** argument is `NULL`). These notes are for PostgreSQL.
+
+> ⚠️ **Warning:** All arguments must be the same kind of type, otherwise you get a conversion error.
+
+> 🏆 **Golden Rule:** **`GREATEST(value, floor)` means "at least this much."** Use it to stop calculations from going below a limit.
