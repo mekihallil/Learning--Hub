@@ -571,3 +571,181 @@ Double the single quote inside a text value. Double quotes mean "a column or tab
 > ⚠️ **Warning:** Changing a `VARCHAR` limit later can be slow on huge tables, and making it **smaller** fails if existing values are too long.
 
 > 🏆 **Golden Rule:** **Use `TEXT` unless a real rule demands a limit.** Then use `VARCHAR(n)`. Avoid `CHAR(n)`.
+
+
+
+
+## ✅ 92. Boolean Data Types
+
+**What it does:** `BOOLEAN` stores one of three states: **true**, **false**, or **`NULL`** (unknown).
+**Why it is used:** Yes/no facts (is this task done? is the account active? is the photo public?) are cleaner and safer as a real boolean than as text like `'yes'`.
+**When to use it:** Any column that is conceptually a flag or a switch.
+
+**Analogy:** A **light switch**: on or off. `NULL` is a switch you haven't looked at yet, so you don't know which position it's in.
+
+### Create and fill a small table
+```sql
+CREATE TEMP TABLE tasks (
+  id SERIAL PRIMARY KEY,
+  title VARCHAR(50),
+  done BOOLEAN
+);
+
+INSERT INTO tasks (title, done)
+VALUES ('Write notes', true), ('Run tests', false), ('Deploy', NULL);
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 3
+```
+```sql
+SELECT * FROM tasks;
+```
+**Output:**
+```
+ id |    title    | done
+----+-------------+------
+  1 | Write notes | t
+  2 | Run tests   | f
+  3 | Deploy      |
+(3 rows)
+```
+`psql` shows `t` for true, `f` for false, and an empty cell for `NULL`.
+
+### Accepted ways to write a boolean
+| True | False |
+|---|---|
+| `true`, `'true'` | `false`, `'false'` |
+| `'t'`, `'y'`, `'yes'` | `'f'`, `'n'`, `'no'` |
+| `'on'`, `'1'` | `'off'`, `'0'` |
+
+```sql
+SELECT 'yes'::boolean AS a, 'off'::boolean AS b, '1'::boolean AS c, 'T'::boolean AS d;
+```
+**Output:**
+```
+ a | b | c | d
+---+---+---+---
+ t | f | t | t
+(1 row)
+```
+```sql
+SELECT 'maybe'::boolean;
+```
+**Output:**
+```
+ERROR:  invalid input syntax for type boolean: "maybe"
+```
+Prefer plain `true` and `false` in your own SQL.
+
+### Filtering on a boolean
+```sql
+SELECT title FROM tasks WHERE done;
+```
+**Output:**
+```
+    title
+-------------
+ Write notes
+(1 row)
+```
+`WHERE done` already means `WHERE done = true`, so you don't need `= true`.
+```sql
+SELECT title FROM tasks WHERE NOT done;
+```
+**Output:**
+```
+   title
+-----------
+ Run tests
+(1 row)
+```
+**`Deploy` is missing from both!** Its value is `NULL`, which is neither true nor false.
+
+**To find the "not done yet" rows including unknowns:**
+```sql
+SELECT title FROM tasks WHERE done IS NOT TRUE;
+```
+**Output:**
+```
+   title
+-----------
+ Run tests
+ Deploy
+(2 rows)
+```
+Or find only the unknowns:
+```sql
+SELECT title FROM tasks WHERE done IS NULL;
+```
+**Output:**
+```
+ title
+--------
+ Deploy
+(1 row)
+```
+
+### Comparisons produce booleans
+```sql
+SELECT name, price, price > 300 AS is_pricey FROM phones;
+```
+**Output:**
+```
+    name     | price | is_pricey
+-------------+-------+-----------
+ N1280       |   199 | f
+ iPhone 5S   |   399 | t
+ Galaxy S5   |   299 | f
+ S5620 Monte |   250 | f
+(4 rows)
+```
+Every `WHERE` condition you've written is really a boolean expression.
+
+### Three-valued logic with `NULL`
+| Expression | Result |
+|---|---|
+| `TRUE AND NULL` | `NULL` |
+| `FALSE AND NULL` | `FALSE` |
+| `TRUE OR NULL` | `TRUE` |
+| `FALSE OR NULL` | `NULL` |
+| `NOT NULL` | `NULL` |
+
+`WHERE` keeps a row **only when the result is true**, so `NULL` rows are dropped, as in topic 43.
+
+### Counting booleans
+```sql
+SELECT
+  COUNT(*) AS total,
+  COUNT(*) FILTER (WHERE done) AS finished,
+  COUNT(*) FILTER (WHERE done IS NOT TRUE) AS unfinished
+FROM tasks;
+```
+**Output:**
+```
+ total | finished | unfinished
+-------+----------+------------
+     3 |        1 |          2
+(1 row)
+```
+
+### Good design habits
+| Habit | Why |
+|---|---|
+| Name flags like questions: `is_active`, `has_paid` | Reads naturally in `WHERE is_active` |
+| Forbid `NULL` when you can: `BOOLEAN NOT NULL DEFAULT false` | No unknown third state |
+| Don't store flags as `'yes'` / `'no'` text | Typos like `'Yes '` slip in |
+
+```sql
+CREATE TABLE accounts (
+  id SERIAL PRIMARY KEY,
+  is_active BOOLEAN NOT NULL DEFAULT true
+);
+```
+
+> ⚠️ **Warning:** `NOT done` does **not** return `NULL` rows. If a flag can be `NULL`, handle it with `IS NOT TRUE`, `IS NULL`, or `COALESCE`.
+
+> ⚠️ **Warning:** Never write `= NULL` (topic 11). Use `IS NULL`.
+
+> 🏆 **Golden Rule:** **A boolean has three possible states.** Decide what `NULL` means, or forbid it with `NOT NULL DEFAULT ...`.
