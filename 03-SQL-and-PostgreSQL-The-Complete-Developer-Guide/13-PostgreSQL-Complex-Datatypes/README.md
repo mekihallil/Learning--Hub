@@ -302,3 +302,163 @@ A number too large for `INTEGER` is automatically a `BIGINT`, and a number with 
 > ⚠️ **Warning:** `SERIAL` isn't a real type, it's shorthand for "an `INTEGER` plus an auto-counter." Postgres also offers the SQL-standard `GENERATED ... AS IDENTITY` (topic 26).
 
 > 🏆 **Golden Rule:** **Auto id → `SERIAL`. Whole number → `INTEGER`. Exact decimal → `NUMERIC`. Approximate decimal → `DOUBLE PRECISION`.**
+
+
+
+
+## 🔢 90. More on Number Data Types
+
+**What it does:** The details behind the four rules in topic 89: why floats are inexact, how `NUMERIC(precision, scale)` works, what happens on overflow, and a few surprises.
+**Why it is used:** Number bugs are silent. The query runs, the figures look reasonable, and they're slightly wrong.
+**When to use it:** Any time money, totals, or very large numbers are involved.
+
+**Analogy:** A **ruler** (float) is good enough for woodwork, but you wouldn't count cash with one. A **cash register** (`NUMERIC`) counts every cent exactly.
+
+### Floats are approximations
+```sql
+SELECT 0.1::double precision + 0.2::double precision AS float_sum,
+       0.1::numeric + 0.2::numeric AS exact_sum;
+```
+**Output:**
+```
+       float_sum        | exact_sum
+------------------------+-----------
+    0.30000000000000004 |       0.3
+(1 row)
+```
+Computers store floats in binary, and `0.1` has no exact binary form, just like 1/3 has no exact decimal form.
+
+**It breaks equality tests:**
+```sql
+SELECT 0.1::double precision + 0.2::double precision = 0.3::double precision AS is_equal;
+```
+**Output:**
+```
+ is_equal
+----------
+ f
+(1 row)
+```
+
+**And the error grows when you add many values:**
+```sql
+SELECT SUM(0.1::double precision) AS float_total,
+       SUM(0.1::numeric) AS exact_total
+FROM generate_series(1, 10);
+```
+**Output:**
+```
+     float_total      | exact_total
+----------------------+-------------
+   0.9999999999999999 |         1.0
+(1 row)
+```
+Ten tenths should be exactly 1.
+
+### `REAL` vs `DOUBLE PRECISION`
+| Type | Size | Reliable digits |
+|---|---|---|
+| `REAL` | 4 bytes | about 6 |
+| `DOUBLE PRECISION` | 8 bytes | about 15 |
+
+Prefer `DOUBLE PRECISION` unless you have a reason to save the space.
+
+### `NUMERIC(precision, scale)`
+| Part | Meaning |
+|---|---|
+| **precision** | Total number of digits |
+| **scale** | How many of them come **after** the decimal point |
+
+`NUMERIC(5, 2)` means 5 digits in total, 2 after the point. So the largest value is `999.99`.
+
+```sql
+SELECT 123.456::numeric(5, 2) AS rounded;
+```
+**Output:**
+```
+ rounded
+---------
+  123.46
+(1 row)
+```
+Extra decimals are **rounded** to fit the scale.
+```sql
+SELECT 1000.00::numeric(5, 2);
+```
+**Output:**
+```
+ERROR:  numeric field overflow
+DETAIL:  A field with precision 5, scale 2 must round to an absolute value less than 10^3.
+```
+Too many digits **before** the point is an **error**.
+
+**`NUMERIC` with no arguments** stores any precision you give it (up to 131,072 digits before the point and 16,383 after).
+
+### Whole numbers overflow too
+```sql
+SELECT 2147483647 + 1;
+```
+**Output:**
+```
+ERROR:  integer out of range
+```
+**The fix: use a bigger type:**
+```sql
+SELECT 2147483647::bigint + 1 AS bigger;
+```
+**Output:**
+```
+   bigger
+------------
+ 2147483648
+(1 row)
+```
+```sql
+SELECT 40000::smallint;
+```
+**Output:**
+```
+ERROR:  smallint out of range
+```
+
+### Integer division (a reminder from topic 7)
+```sql
+SELECT 10 / 4 AS whole_division, 10.0 / 4 AS decimal_division;
+```
+**Output:**
+```
+ whole_division | decimal_division
+----------------+------------------
+              2 | 2.5000000000000000
+(1 row)
+```
+Two integers give an integer. Make one side a decimal (`10.0` or `::numeric`) to keep the fraction.
+
+### Rounding is not the same for every type
+```sql
+SELECT ROUND(2.5::numeric) AS numeric_round, ROUND(2.5::double precision) AS float_round;
+```
+**Output:**
+```
+ numeric_round | float_round
+---------------+-------------
+             3 |           2
+(1 row)
+```
+`NUMERIC` rounds halves **away from zero**. For `DOUBLE PRECISION` the behavior is platform-dependent, and **round-to-nearest-even** is the most common, so `2.5` becomes `2`.
+
+### Which type for money?
+| Approach | Verdict |
+|---|---|
+| `NUMERIC(12, 2)` | ✅ Best for most apps |
+| `INTEGER` / `BIGINT` storing **cents** (`1999` means $19.99) | ✅ Good, and fast |
+| `DOUBLE PRECISION` / `REAL` | ❌ Rounding errors |
+| The `MONEY` type | ⚠️ Avoid, because it depends on locale settings |
+
+> ⚠️ **Warning:** **Never compare floats with `=`.** Compare within a small range instead, or use `NUMERIC`.
+
+> ⚠️ **Warning:** `NUMERIC(5, 2)` rounds **extra decimals** but **rejects** too many whole-number digits. Choose a precision with headroom.
+
+> ⚠️ **Warning:** Overflow errors appear **in the middle of a calculation**, not only when storing. `SUM` of many `INTEGER`s is promoted to `BIGINT` automatically, but your own `a * b` is not.
+
+> 🏆 **Golden Rule:** **Exact answers need `NUMERIC`.** If an amount will be added, compared, or shown to a customer, don't store it as a float.
