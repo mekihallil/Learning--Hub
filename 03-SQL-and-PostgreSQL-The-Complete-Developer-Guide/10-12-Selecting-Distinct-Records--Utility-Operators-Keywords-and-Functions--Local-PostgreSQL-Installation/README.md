@@ -652,3 +652,188 @@ Text and numbers can't share one result column.
 > ⚠️ **Warning:** A simple `CASE x WHEN NULL THEN ...` **never matches**, because `NULL = NULL` isn't true (topic 11). Use `CASE WHEN x IS NULL THEN ...`.
 
 > 🏆 **Golden Rule:** **`CASE` is a column-sized `if / else if / else`.** Write conditions from most specific to least, include an `ELSE`, and end with `END`.
+
+
+## 💾 85. PostgreSQL Installation on macOS, Linux and Windows
+
+**What it does:** Walks through installing **PostgreSQL** on your own computer, so you can run every query in these notes yourself.
+**Why it is used:** Reading SQL is only half the skill. Running it against a real database shows you the errors and the outputs.
+**When to use it:** Once, before you start practicing. If you already have Postgres, jump to **Verify the install** below.
+
+**Analogy:** Building the workshop before the lessons. PostgreSQL is the workshop, `psql` is the front door, and SQL is the tool set.
+
+> **Tip:** This is a setup topic. In your README you may want to move it to a **"Getting Started"** section at the very top, before topic 1.
+
+**Which version?** Pick the **latest stable major version** (**18** at the time of writing). Check [postgresql.org/download](https://www.postgresql.org/download/) for the current one. The commands below use `18`, so replace the number if a newer major version is out.
+
+**Three things you'll set or choose, on every system:**
+
+| Item | Typical value |
+|---|---|
+| Superuser name | `postgres` |
+| Superuser password | One **you** choose, so write it down |
+| Port | `5432` (the default) |
+
+---
+
+### 🪟 Windows
+
+**Step 1.** Go to [postgresql.org/download/windows](https://www.postgresql.org/download/windows/) and download the **installer from EDB** for your version.
+**Step 2.** Run the installer. Keep the default components ticked:
+
+| Component | Why |
+|---|---|
+| PostgreSQL Server | The database itself |
+| pgAdmin 4 | The graphical tool (topic 86) |
+| Command Line Tools | Includes `psql` |
+| Stack Builder | Optional extras, safe to untick |
+
+**Step 3.** Keep the default **data directory**.
+**Step 4.** Enter a **password** for the `postgres` superuser, and don't forget it.
+**Step 5.** Keep the **port** as `5432` and the default **locale**, then click through to finish.
+
+**Open `psql`:** press Start, search for **SQL Shell (psql)**, and press **Enter** at each prompt to accept the defaults (Server `localhost`, Database `postgres`, Port `5432`, Username `postgres`). Then type your password.
+
+**Optional: use `psql` from any terminal** by adding the `bin` folder to your `PATH`, for example:
+```
+C:\Program Files\PostgreSQL\18\bin
+```
+Then open a **new** PowerShell window and run:
+```powershell
+psql -U postgres
+```
+
+---
+
+### 🍎 macOS
+
+Choose **one** of three options.
+
+**Option A: the EDB graphical installer (easiest, includes pgAdmin).**
+Download it from [postgresql.org/download/macosx](https://www.postgresql.org/download/macosx/), run it, and follow the same steps as Windows (set a password, keep port `5432`). PostgreSQL 18 needs macOS 13 or newer.
+
+**Option B: Postgres.app.**
+A simple menubar app. Open it and the server runs, close it and the server stops. Download it from [postgresapp.com](https://postgresapp.com).
+
+**Option C: Homebrew (good for developers).**
+```bash
+brew install postgresql@18
+brew services start postgresql@18
+```
+Version formulas are named `postgresql@NN`. Check what's available with:
+```bash
+brew search postgresql
+```
+Versioned formulas aren't linked into your `PATH` automatically. Add them:
+```bash
+# Apple Silicon
+echo 'export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"' >> ~/.zshrc
+# Intel Mac: use /usr/local/opt/postgresql@18/bin instead
+source ~/.zshrc
+```
+With Homebrew, the superuser is **your macOS username** and there's **no password** by default. Connect with:
+```bash
+psql postgres
+```
+
+---
+
+### 🐧 Linux
+
+**Debian or Ubuntu:**
+```bash
+sudo apt update
+sudo apt install postgresql
+sudo systemctl status postgresql
+```
+This installs the version your distribution ships. For the **newest** version, add the official PostgreSQL APT repository first (instructions at [apt.postgresql.org](https://wiki.postgresql.org/wiki/Apt)).
+
+**Fedora, RHEL, Rocky, AlmaLinux:**
+```bash
+sudo dnf install postgresql-server
+sudo postgresql-setup --initdb
+sudo systemctl enable --now postgresql
+```
+For a newer version on RHEL-family systems, use the PostgreSQL Yum repository from [postgresql.org/download/linux](https://www.postgresql.org/download/linux/).
+
+**Connect as the `postgres` user:**
+```bash
+sudo -u postgres psql
+```
+**Give the `postgres` user a password** (you'll need it for pgAdmin in topic 86):
+```sql
+ALTER USER postgres PASSWORD 'choose-a-strong-password';
+```
+**Output:**
+```
+ALTER ROLE
+```
+
+---
+
+### ✅ Verify the install (every system)
+```bash
+psql --version
+```
+**Output:**
+```
+psql (PostgreSQL) 18.x
+```
+Inside `psql`:
+```sql
+SELECT version();
+```
+**Output:**
+```
+                          version
+------------------------------------------------------------
+ PostgreSQL 18.x on ... (details depend on your system)
+(1 row)
+```
+**Create your practice database (topic 20):**
+```sql
+CREATE DATABASE photo_app;
+```
+**Output:**
+```
+CREATE DATABASE
+```
+```sql
+\c photo_app
+```
+**Output:**
+```
+You are now connected to database "photo_app" as user "postgres".
+```
+**Leave `psql`:**
+```
+\q
+```
+
+**Handy `psql` commands (they start with `\`):**
+
+| Command | What it does |
+|---|---|
+| `\l` | List databases |
+| `\c name` | Connect to a database |
+| `\dt` | List tables |
+| `\d table` | Describe a table |
+| `\q` | Quit |
+
+### Troubleshooting
+| Message | Likely cause and fix |
+|---|---|
+| `psql: command not found` | `psql` isn't on your `PATH`. Add the `bin` folder (see above) and open a **new** terminal |
+| `password authentication failed for user "postgres"` | Wrong password. Reset it with `ALTER USER postgres PASSWORD '...';` |
+| `connection refused` / `could not connect to server` | The server isn't running. Start it (`brew services start ...`, `sudo systemctl start postgresql`, or the Windows service) |
+| `role "yourname" does not exist` | You're connecting as a user that doesn't exist. On Homebrew use `psql postgres`, elsewhere use `-U postgres` |
+| `Peer authentication failed for user "postgres"` (Linux) | Use `sudo -u postgres psql` instead of plain `psql` |
+| Port `5432` already in use | Another Postgres is running. Stop it, or install on a different port |
+
+> ⚠️ **Warning:** The `postgres` account is a **superuser** that can do anything. Choose a strong password, and never use it as the login for a real application. Create a separate user with limited rights.
+
+> ⚠️ **Warning:** Don't expose port `5432` to the internet. For learning, keep the server reachable from your own computer only (the default).
+
+> ⚠️ **Warning:** Installer screens and package names change between versions. If a step doesn't match, follow the [official download page](https://www.postgresql.org/download/) for your system.
+
+> 🏆 **Golden Rule:** **Install, verify with `SELECT version();`, then create a practice database.** If you can connect and run a query, you're ready.
