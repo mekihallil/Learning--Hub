@@ -960,3 +960,192 @@ INSERT 0 3
 > ⚠️ **Warning:** `BETWEEN` includes **both ends**. Comparing a `TIMESTAMP` against `'2026-11-30'` means midnight at the **start** of that day, so events later on the 30th are missed.
 
 > 🏆 **Golden Rule:** **Write dates as `YYYY-MM-DD`, store moments as `TIMESTAMPTZ`, and let the database do the date maths.**
+
+
+
+## ⏱️ 94. Really Awesome Intervals
+
+**What it does:** `INTERVAL` stores a **length of time**: "3 days," "2 hours 30 minutes," "1 year 2 months." You use it to add to or subtract from dates and timestamps.
+**Why it is used:** Questions like "what's the date 30 days from now?" or "how long did that take?" are all about durations.
+**When to use it:** Deadlines, expiry times, "in the last 7 days" filters, and session lengths.
+
+**Analogy:** A **measuring tape for time**. A date is a spot on the calendar, and an interval is the distance between two spots.
+
+### Writing an interval
+```sql
+SELECT
+  INTERVAL '1 year 2 months 3 days' AS long_one,
+  INTERVAL '2 hours 30 minutes' AS short_one,
+  INTERVAL '2 weeks' AS weeks;
+```
+**Output:**
+```
+        long_one        | short_one |  weeks
+------------------------+-----------+---------
+ 1 year 2 mons 3 days   | 02:30:00  | 14 days
+(1 row)
+```
+The units you can use: years, months, weeks, days, hours, minutes, and seconds. Postgres abbreviates months as `mons` in the output.
+
+### Adding intervals to dates and timestamps
+```sql
+SELECT
+  TIMESTAMP '2026-11-20 09:00' + INTERVAL '2 hours 30 minutes' AS meeting_end,
+  TIMESTAMP '2026-11-20 12:00' - INTERVAL '7 days' AS week_ago;
+```
+**Output:**
+```
+     meeting_end     |       week_ago
+---------------------+---------------------
+ 2026-11-20 11:30:00 | 2026-11-13 12:00:00
+(1 row)
+```
+A `DATE` plus an interval gives a `TIMESTAMP`:
+```sql
+SELECT DATE '2026-11-20' + INTERVAL '1 month' AS next_month;
+```
+**Output:**
+```
+     next_month
+---------------------
+ 2026-12-20 00:00:00
+(1 row)
+```
+
+### Subtracting timestamps gives an interval
+```sql
+SELECT
+  TIMESTAMP '2026-11-20 18:00' - TIMESTAMP '2026-11-20 09:30' AS worked,
+  TIMESTAMP '2026-11-22 08:00' - TIMESTAMP '2026-11-20 09:30' AS elapsed;
+```
+**Output:**
+```
+  worked  |     elapsed
+----------+------------------
+ 08:30:00 | 1 day 22:30:00
+(1 row)
+```
+
+**Two different "differences":**
+
+| Subtracting... | Gives |
+|---|---|
+| `DATE - DATE` | A whole **number of days** (topic 93) |
+| `TIMESTAMP - TIMESTAMP` | An **interval** |
+
+### Interval maths
+```sql
+SELECT
+  INTERVAL '1 day' * 3 AS three_days,
+  INTERVAL '1 day' + INTERVAL '12 hours' AS day_and_a_half,
+  INTERVAL '90 minutes' > INTERVAL '1 hour' AS longer;
+```
+**Output:**
+```
+ three_days | day_and_a_half | longer
+------------+----------------+--------
+ 3 days     | 1 day 12:00:00 | t
+(1 row)
+```
+
+### Age between two dates
+```sql
+SELECT AGE(DATE '2026-11-20', DATE '2000-05-15') AS age;
+```
+**Output:**
+```
+             age
+------------------------------
+ 26 years 6 mons 5 days
+(1 row)
+```
+`AGE` counts **calendar** years, months, and days. With one argument, `AGE(date)` measures from today.
+
+### Turning an interval into a number
+```sql
+SELECT EXTRACT(EPOCH FROM INTERVAL '1 hour 30 minutes') AS seconds;
+```
+**Output:**
+```
+   seconds
+-------------
+ 5400.000000
+(1 row)
+```
+`EPOCH` is the total number of seconds. Divide by 60 for minutes, or by 3600 for hours.
+
+### Building an interval from numbers
+```sql
+SELECT make_interval(hours => 2, mins => 30) AS built;
+```
+**Output:**
+```
+  built
+----------
+ 02:30:00
+(1 row)
+```
+This is handy when the amount comes from a column or a variable rather than being typed out.
+
+### Practical example: "in the last 7 days"
+```sql
+CREATE TEMP TABLE logins (username VARCHAR(50), logged_in_at TIMESTAMP);
+
+INSERT INTO logins (username, logged_in_at)
+VALUES
+  ('monahan93', '2026-11-19 08:00'),
+  ('pferrer',   '2026-11-14 18:30'),
+  ('si93onis',  '2026-10-01 12:00');
+
+SELECT username, logged_in_at
+FROM logins
+WHERE logged_in_at > TIMESTAMP '2026-11-20 12:00' - INTERVAL '7 days'
+ORDER BY logged_in_at;
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 3
+ username  |    logged_in_at
+-----------+---------------------
+ pferrer   | 2026-11-14 18:30:00
+ monahan93 | 2026-11-19 08:00:00
+(2 rows)
+```
+In a real app, replace the fixed timestamp with `NOW()`:
+```sql
+WHERE logged_in_at > NOW() - INTERVAL '7 days'
+```
+
+### The month-end surprise
+Months aren't a fixed number of days, so adding one to a month-end date can land on an earlier day:
+```sql
+SELECT DATE '2026-01-31' + INTERVAL '1 month' AS result;
+```
+**Output:**
+```
+       result
+---------------------
+ 2026-02-28 00:00:00
+(1 row)
+```
+Postgres clamps to the last day of February.
+
+**Why intervals are stored in three parts:** an interval keeps its **months**, **days**, and **time** separately, because "1 month" and "1 day" don't always equal a fixed number of hours (months differ in length, and a day can be 23 or 25 hours around daylight-saving changes).
+
+### Quick reference
+| You want... | Write |
+|---|---|
+| 30 days from a date | `date_col + INTERVAL '30 days'` (or `date_col + 30`) |
+| 1 hour ago | `NOW() - INTERVAL '1 hour'` |
+| How long between two moments | `end_ts - start_ts` |
+| That length in seconds | `EXTRACT(EPOCH FROM (end_ts - start_ts))` |
+| Years, months, days between dates | `AGE(later, earlier)` |
+
+> ⚠️ **Warning:** Don't assume `INTERVAL '1 month'` is 30 days. Use `'30 days'` if you mean exactly 30 days.
+
+> ⚠️ **Warning:** `DATE + INTERVAL` returns a `TIMESTAMP`, not a `DATE`. Cast back with `::date` if you need a date.
+
+> ⚠️ **Warning:** Subtracting two `TIMESTAMPTZ` values across a daylight-saving change gives the **real** elapsed time, which may differ from the clock difference by an hour.
+
+> 🏆 **Golden Rule:** **Let `INTERVAL` do the counting.** Add it to dates, subtract timestamps to get one, and use `EXTRACT(EPOCH ...)` when you need a plain number.
