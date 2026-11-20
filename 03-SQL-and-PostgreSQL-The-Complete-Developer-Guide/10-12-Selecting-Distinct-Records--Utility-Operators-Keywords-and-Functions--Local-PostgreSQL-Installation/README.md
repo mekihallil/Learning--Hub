@@ -187,3 +187,97 @@ SELECT manufacturer FROM phones GROUP BY manufacturer;
 > ⚠️ **Warning:** Check Task 3 by hand against the list in topic 54: the (photo, user) pairs are (1,2), (1,3), (2,2), (2,3), (2,4), (3,2), (5,1), (5,2), (5,4).
 
 > 🏆 **Golden Rule:** **Ask what each row of your answer should represent.** "One row per manufacturer" points to `DISTINCT`, `DISTINCT ON`, or `GROUP BY`.
+
+
+## ✅ 81. A Distinct Solution
+
+**What it does:** The worked answers to the exercise in topic 80, with an explanation of each.
+**Why it is used:** Comparing your attempt with a clean solution shows where your thinking differed.
+**When to use it:** After you've tried the four tasks.
+
+**Task 1: different manufacturers, sorted**
+```sql
+SELECT DISTINCT manufacturer
+FROM phones
+ORDER BY manufacturer;
+```
+**Output:**
+```
+ manufacturer
+--------------
+ Apple
+ Nokia
+ Samsung
+(3 rows)
+```
+
+**Task 2: how many different commenters**
+```sql
+SELECT COUNT(DISTINCT user_id) AS commenters
+FROM comments;
+```
+**Output:**
+```
+ commenters
+------------
+          4
+(1 row)
+```
+`COUNT(*)` would say `10` (every comment). The `DISTINCT` inside the aggregate counts each user once.
+
+**Task 3: how many different (photo, user) pairs**
+```sql
+SELECT COUNT(*) AS pairs
+FROM (
+  SELECT DISTINCT photo_id, user_id
+  FROM comments
+) AS unique_pairs;
+```
+**Output:**
+```
+ pairs
+-------
+     9
+(1 row)
+```
+The inner query removes the repeat (user 2 on photo 2), leaving 9 rows, and the outer query counts them. This is the "subquery in `FROM`" pattern from topic 69.
+
+PostgreSQL also lets you pass a row to the aggregate directly:
+```sql
+SELECT COUNT(DISTINCT (photo_id, user_id)) AS pairs FROM comments;
+```
+**Output:** `9`. The subquery version works in every database, so it's the safer one to learn first.
+
+**Task 4: the cheapest phone per manufacturer**
+```sql
+SELECT DISTINCT ON (manufacturer) manufacturer, name, price
+FROM phones
+ORDER BY manufacturer, price;
+```
+**Output:**
+```
+ manufacturer |    name     | price
+--------------+-------------+-------
+ Apple        | iPhone 5S   |   399
+ Nokia        | N1280       |   199
+ Samsung      | S5620 Monte |   250
+(3 rows)
+```
+`ORDER BY manufacturer, price` puts each manufacturer's **cheapest** phone first, and `DISTINCT ON` keeps only that first row. (Topic 79 sorted `price DESC` to get the priciest.)
+
+**Common mistakes:**
+
+| Mistake | What happens |
+|---|---|
+| Task 2 as `SELECT DISTINCT COUNT(user_id) ...` | Returns `10`. `DISTINCT` applies **after** counting, to the single result row |
+| Task 3 as `SELECT DISTINCT COUNT(photo_id, user_id)` | `ERROR: function count(integer, integer) does not exist` |
+| Task 4 with `ORDER BY price` only | `ERROR: SELECT DISTINCT ON expressions must match initial ORDER BY expressions` |
+| Task 4 with `ORDER BY manufacturer` only | No error, but which Samsung phone survives is **arbitrary** |
+
+**Sanity checks:** Task 1 should have **3** rows (3 manufacturers), Task 3's answer should be **at most 10** (the number of comments), and Task 4 should have **one row per manufacturer**.
+
+> ⚠️ **Warning:** `DISTINCT ON` is **PostgreSQL-specific**. Other databases need a different approach, such as a window function or a correlated subquery (topic 75).
+
+> ⚠️ **Warning:** The `ORDER BY` of a `DISTINCT ON` query **must start with the same expression** as the `ON (...)`. After that you choose how ties are broken.
+
+> 🏆 **Golden Rule:** **`DISTINCT` inside an aggregate counts different values. `DISTINCT ON` plus a matching `ORDER BY` picks one row per group.**
