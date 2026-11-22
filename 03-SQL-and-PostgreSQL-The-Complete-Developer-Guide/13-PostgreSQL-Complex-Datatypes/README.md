@@ -1234,3 +1234,104 @@ The database layer matters most because data arrives from many places: your app,
 > ⚠️ **Warning:** Validation in the app is **not** a substitute for constraints. It only protects the paths that go through the app.
 
 > 🏆 **Golden Rule:** **Decide the rules before the data arrives.** For each column ask: can it be empty, does it need a default, must it be unique, and what values make sense?
+
+
+
+## 🖱️ 96. Creating and Viewing Tables in pgAdmin
+
+**What it does:** Shows how to **create a table with clicks** in pgAdmin instead of typing `CREATE TABLE`, and how to **view** its structure and rows afterwards.
+**Why it is used:** The dialog lists every option (types, `NOT NULL`, defaults, constraints) in one place, and it writes the SQL for you. That makes it a good way to **learn** the syntax and a quick way to inspect tables.
+**When to use it:** While learning constraints, or whenever you'd rather click than type. You set up pgAdmin in topic 86.
+
+**Analogy:** A form-based way to fill out the same paperwork. The SQL is still the official document, and pgAdmin just helps you fill it in.
+
+> **Note:** menu labels differ slightly between pgAdmin versions. If a label doesn't match exactly, look for the closest one.
+
+### Create a table
+**Step 1.** Start fresh. Drop the practice table from topic 95 in the Query Tool:
+```sql
+DROP TABLE IF EXISTS products;
+```
+**Output:**
+```
+DROP TABLE
+```
+**Step 2.** In the left panel expand **Servers**, then your server, then **Databases**, then **photo_app**, then **Schemas**, then **public**.
+**Step 3.** Right-click **Tables**, then choose **Create**, then **Table...**.
+**Step 4.** On the **General** tab, set **Name** to `products`.
+**Step 5.** On the **Columns** tab, click **+** to add each column:
+
+| Name | Data type | Length | Not NULL? | Primary key? |
+|---|---|---|---|---|
+| `id` | `serial` | | ✅ | ✅ |
+| `name` | `character varying` | 40 | | |
+| `department` | `character varying` | 40 | | |
+| `price` | `integer` | | | |
+| `weight` | `integer` | | | |
+
+**Step 6.** Click the **SQL** tab to **preview** the statement pgAdmin will run.
+**Step 7.** Click **Save**.
+
+### The SQL pgAdmin generates
+The **SQL** tab shows something like this (your formatting may differ slightly):
+```sql
+CREATE TABLE IF NOT EXISTS public.products
+(
+    id serial NOT NULL,
+    name character varying(40),
+    department character varying(40),
+    price integer,
+    weight integer,
+    CONSTRAINT products_pkey PRIMARY KEY (id)
+);
+```
+That's the same table you've been writing by hand, just more verbose. **Reading this tab is one of the best ways to learn constraint syntax**, because you tick a box and watch the SQL change.
+
+### Where each option lives in the dialog
+| Option | Where in pgAdmin |
+|---|---|
+| `NOT NULL` | **Columns** tab, **Not NULL?** switch |
+| Primary key | **Columns** tab, **Primary key?** switch |
+| `DEFAULT` | **Columns** tab, **Default** field |
+| `UNIQUE` | **Constraints** tab, then **Unique** |
+| `CHECK` | **Constraints** tab, then **Check** |
+| Foreign key | **Constraints** tab, then **Foreign Key** |
+
+### View the table
+**The table appears in the tree.** If it doesn't, right-click **Tables** and choose **Refresh**.
+
+| What you want | How |
+|---|---|
+| See the **columns** | Expand **products**, then **Columns** |
+| See the **constraints** | Expand **products**, then **Constraints** |
+| See the **rows** | Right-click **products**, then **View/Edit Data**, then **All Rows** |
+| See the **CREATE statement** | Select the table and open the **SQL** tab in the right-hand panel |
+| Change the structure | Right-click **products**, then **Properties...** |
+| Run your own queries | Right-click **photo_app**, then **Query Tool** |
+
+### The same view in `psql`
+```sql
+\d products
+```
+**Output:**
+```
+                                   Table "public.products"
+   Column   |         Type          | Collation | Nullable |               Default
+------------+-----------------------+-----------+----------+--------------------------------------
+ id         | integer               |           | not null | nextval('products_id_seq'::regclass)
+ name       | character varying(40) |           |          |
+ department | character varying(40) |           |          |
+ price      | integer               |           |          |
+ weight     | integer               |           |          |
+Indexes:
+    "products_pkey" PRIMARY KEY, btree (id)
+```
+Both tools show the same facts. From here on, every topic changes the rules and shows the matching SQL.
+
+> ⚠️ **Warning:** Clicking **Save** runs the change **immediately**. Check the **SQL** tab first, especially when editing a table that already holds data.
+
+> ⚠️ **Warning:** **Delete/Drop** in the right-click menu removes the table and its data with no undo, exactly like `DROP TABLE`.
+
+> ⚠️ **Warning:** A table you made in the GUI is the same as one made in SQL. Don't create the same table both ways, or you'll get `ERROR: relation "products" already exists`.
+
+> 🏆 **Golden Rule:** **Use the SQL tab as a free tutor.** Configure the table with clicks, then read the SQL, and soon you won't need the clicks.
