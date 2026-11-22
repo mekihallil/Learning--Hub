@@ -2285,3 +2285,148 @@ DROP TABLE
 > ⚠️ **Warning:** A check only sees **one row**. It can't compare a row with others, so "no two orders overlap" needs a different tool (an exclusion constraint, which comes later).
 
 > 🏆 **Golden Rule:** **Use a table-level `CHECK` when the rule is about the relationship between columns.** Name it, and keep the columns `NOT NULL` so the rule can't be dodged.
+
+
+
+
+## 🧭 104. So Where Are We Applying Validation
+
+**What it does:** Pulls the whole section together and answers the big question: **which layer should validate what?** The answer is "all of them, for different reasons," with the database as the last line of defense.
+**Why it is used:** You now have validation in three places (the browser, your Next.js app, and the database). Knowing each layer's job avoids both gaps and duplicated effort.
+**When to use it:** When designing any feature that accepts user input.
+
+**Analogy:** Airport security. There's a ticket check at the **entrance** (browser), a **security scan** (your app), and a **boarding gate** (the database). Each stops problems the others might miss, and only the last one is truly impossible to walk around.
+
+### The three layers
+| Layer | Tools | Strength | Weakness |
+|---|---|---|---|
+| **1. Browser / form** | `required`, `min`, `type="email"` | Instant feedback | A user can bypass it |
+| **2. Your app** | Zod and Server Actions (Next.js topics 62, 73, 74) | Friendly, specific messages, and it can check permissions | Only guards data that comes **through the app** |
+| **3. Database** | `NOT NULL`, `DEFAULT`, `UNIQUE`, `CHECK`, keys | **Cannot be bypassed**, and it protects data from every source | Error messages are technical |
+
+### What each layer is best at
+| Rule | Browser | App | Database |
+|---|---|---|---|
+| "Name is required" | ✅ hint | ✅ message | ✅ `NOT NULL` |
+| "Price is positive" | ✅ `min="1"` | ✅ Zod | ✅ `CHECK (price > 0)` |
+| "Name is unique per department" | ❌ can't know | ⚠️ can check, but can race | ✅ **only the database is reliable** |
+| "Order belongs to a real user" | ❌ | ⚠️ | ✅ foreign key |
+| "Is this user allowed to do this?" | ❌ | ✅ | ⚠️ limited |
+| "Friendly wording" | ✅ | ✅ | ❌ |
+
+**Uniqueness is the clearest example.** Two requests can both pass an "does it exist yet?" check in the app and then both insert. Only a `UNIQUE` constraint guarantees one wins and the other fails.
+
+### The full table with every rule from this section
+```sql
+DROP TABLE IF EXISTS products;
+
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(40) NOT NULL,
+  department VARCHAR(40) NOT NULL,
+  price INTEGER NOT NULL DEFAULT 999
+    CONSTRAINT price_positive CHECK (price > 0),
+  weight INTEGER
+    CONSTRAINT weight_not_negative CHECK (weight >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT unique_name_per_department UNIQUE (name, department),
+  CONSTRAINT name_not_blank CHECK (LENGTH(TRIM(name)) > 0)
+);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+```
+```sql
+\d products
+```
+**Output:**
+```
+                                      Table "public.products"
+   Column   |           Type           | Collation | Nullable |               Default
+------------+--------------------------+-----------+----------+--------------------------------------
+ id         | integer                  |           | not null | nextval('products_id_seq'::regclass)
+ name       | character varying(40)    |           | not null |
+ department | character varying(40)    |           | not null |
+ price      | integer                  |           | not null | 999
+ weight     | integer                  |           |          |
+ created_at | timestamp with time zone |           | not null | now()
+Indexes:
+    "products_pkey" PRIMARY KEY, btree (id)
+    "unique_name_per_department" UNIQUE CONSTRAINT, btree (name, department)
+Check constraints:
+    "name_not_blank" CHECK (length(btrim(name::text)) > 0)
+    "price_positive" CHECK (price > 0)
+    "weight_not_negative" CHECK (weight >= 0)
+```
+(Postgres rewrites `TRIM` as `btrim` in this listing. It's the same thing.)
+
+### The constraint cheat sheet
+| Constraint | Guarantees | Topic |
+|---|---|---|
+| `NOT NULL` | A value is always present | 97 and 98 |
+| `DEFAULT` | A fallback when no value is given | 99 |
+| `UNIQUE` | No duplicates (one column or a combination) | 100 and 101 |
+| `CHECK` | A custom rule holds for each row | 102 and 103 |
+| `PRIMARY KEY` | Unique, never `NULL`, identifies the row | 24 |
+| `FOREIGN KEY` | The link points at a real row | 25 to 27 |
+
+### Reading the database's errors in your app
+Every constraint failure carries a standard **error code** (the SQLSTATE):
+
+| Code | Meaning | Example message |
+|---|---|---|
+| `23502` | Not-null violation | `null value in column ... violates not-null constraint` |
+| `23503` | Foreign key violation | `violates foreign key constraint` |
+| `23505` | Unique violation | `duplicate key value violates unique constraint` |
+| `23514` | Check violation | `violates check constraint` |
+
+**With Prisma in a Server Action** (the pattern from topic 68), catch the error and turn it into a friendly message:
+
+| Problem | Prisma error code |
+|---|---|
+| Unique constraint failed | `P2002` |
+| Foreign key constraint failed | `P2003` |
+| Null constraint violation | `P2011` |
+
+```tsx
+import { Prisma } from "@prisma/client";
+
+try {
+  await db.product.create({ data: { name, department, price } });
+} catch (err) {
+  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+    return { errors: { name: ["That product already exists in this department"] } };
+  }
+  return { errors: { _form: ["Something went wrong. Please try again."] } };
+}
+```
+
+### A recommended workflow
+| Step | What to do |
+|---|---|
+| 1 | Decide the rules at design time (topic 95) |
+| 2 | Put the **hard guarantees** in the database (constraints) |
+| 3 | Mirror them in the app with Zod for friendly messages |
+| 4 | Add light hints in the form (`required`, `min`) |
+| 5 | In the app, **catch constraint errors** and translate them |
+
+### Clean up the practice tables
+```sql
+DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS orders;
+```
+**Output:**
+```
+DROP TABLE
+DROP TABLE
+```
+
+> ⚠️ **Warning:** **Prisma's schema file doesn't express `CHECK` constraints directly.** Teams usually add them with a hand-edited SQL migration (for example `npx prisma migrate dev --create-only`, then editing the generated file). Check the Prisma docs for your version, since this changes.
+
+> ⚠️ **Warning:** The `Prisma` import path depends on your generator setup, and newer Prisma versions (including 7) can generate the client into a custom folder. Import from **that generated path** if `@prisma/client` doesn't export it (topic 76).
+
+> ⚠️ **Warning:** Don't show raw database error text to users. It exposes table and column names. Catch the error, log it on the server, and return a clean message.
+
+> 🏆 **Golden Rule:** **Validate in the browser for convenience, in the app for clarity, and in the database for certainty.** If a rule must **never** be broken, it belongs in a constraint.
