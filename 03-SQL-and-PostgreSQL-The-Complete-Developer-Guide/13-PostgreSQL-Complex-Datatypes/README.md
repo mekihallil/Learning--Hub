@@ -1990,3 +1990,150 @@ A photo can have many tags and a tag many photos, but the **same pairing** can't
 > ⚠️ **Warning:** Column **order** in the constraint doesn't change what's allowed, but it affects which lookups the index speeds up. `UNIQUE (name, department)` helps searches by `name` more than by `department` alone.
 
 > 🏆 **Golden Rule:** **Use multi-column `UNIQUE` when the rule is "this combination only once."** The error message lists the whole combination, so name the constraint to make it readable.
+
+
+
+
+## ✔️ 102. Adding a Validation Check
+
+**What it does:** `CHECK (condition)` is a **custom rule for one row**. Any insert or update where the condition isn't true is rejected.
+**Why it is used:** It's the most flexible constraint. It can say "price must be positive," "weight can't be negative," or "department must be one of these."
+**When to use it:** Whenever a value must fall in a range, match a pattern, or come from a fixed set.
+
+**Analogy:** A **height requirement sign** at a ride: "you must be at least 120 cm." Everyone is measured, and anyone who fails is turned away.
+
+### Create the table with checks
+```sql
+DROP TABLE IF EXISTS products;
+
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(40) NOT NULL,
+  department VARCHAR(40) NOT NULL,
+  price INTEGER NOT NULL CHECK (price > 0),
+  weight INTEGER CHECK (weight >= 0)
+);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+```
+
+### A valid row, and an invalid one
+```sql
+INSERT INTO products (name, department, price, weight)
+VALUES ('Shirt', 'Clothes', 20, 1);
+```
+**Output:**
+```
+INSERT 0 1
+```
+```sql
+INSERT INTO products (name, department, price, weight)
+VALUES ('Hammer', 'Tools', 0, 2);
+```
+**Output:**
+```
+ERROR:  new row for relation "products" violates check constraint "products_price_check"
+DETAIL:  Failing row contains (2, Hammer, Tools, 0, 2).
+```
+Postgres named it `<table>_<column>_check`.
+
+### A `NULL` passes a check
+```sql
+INSERT INTO products (name, department, price, weight)
+VALUES ('Pen', 'Stationery', 3, NULL);
+```
+**Output:**
+```
+INSERT 0 1
+```
+`NULL >= 0` is **unknown**, not false, and a `CHECK` only rejects a row when the condition is **false**. That's why `price` also has `NOT NULL`.
+
+### Name your constraints
+```sql
+CREATE TABLE products_named (
+  id SERIAL PRIMARY KEY,
+  price INTEGER NOT NULL CONSTRAINT price_positive CHECK (price > 0)
+);
+INSERT INTO products_named (price) VALUES (-5);
+```
+**Output:**
+```
+CREATE TABLE
+ERROR:  new row for relation "products_named" violates check constraint "price_positive"
+DETAIL:  Failing row contains (1, -5).
+```
+`price_positive` tells you the broken rule at a glance. (Clean up with `DROP TABLE products_named;`.)
+
+### Add a check to an existing table
+```sql
+ALTER TABLE products
+  ADD CONSTRAINT dept_allowed
+  CHECK (department IN ('Clothes', 'Tools', 'Stationery', 'Toys'));
+```
+**Output:**
+```
+ALTER TABLE
+```
+```sql
+INSERT INTO products (name, department, price) VALUES ('Sofa', 'Furniture', 300);
+```
+**Output:**
+```
+ERROR:  new row for relation "products" violates check constraint "dept_allowed"
+DETAIL:  Failing row contains (4, Sofa, Furniture, 300, null).
+```
+**Gotcha:** if existing rows already break the rule, adding it fails:
+```
+ERROR:  check constraint "dept_allowed" of relation "products" is violated by some row
+```
+Find the bad rows with a `SELECT ... WHERE NOT (condition)`, fix them, and try again (topic 98).
+
+### Fix the "blank name" gap from topics 97 and 98
+```sql
+ALTER TABLE products
+  ADD CONSTRAINT name_not_blank CHECK (LENGTH(TRIM(name)) > 0);
+
+INSERT INTO products (name, department, price) VALUES ('   ', 'Tools', 5);
+```
+**Output:**
+```
+ALTER TABLE
+ERROR:  new row for relation "products" violates check constraint "name_not_blank"
+DETAIL:  Failing row contains (5, , Tools, 5, null).
+```
+
+### What a check can test
+| Rule | `CHECK` |
+|---|---|
+| Positive number | `CHECK (price > 0)` |
+| Range | `CHECK (rating BETWEEN 1 AND 5)` |
+| One of a list | `CHECK (status IN ('draft', 'live'))` |
+| Minimum length | `CHECK (LENGTH(password) >= 8)` |
+| Not blank | `CHECK (LENGTH(TRIM(name)) > 0)` |
+| Pattern | `CHECK (code ~ '^[A-Z]{3}[0-9]{3}$')` |
+
+### Remove one
+```sql
+ALTER TABLE products DROP CONSTRAINT dept_allowed;
+```
+**Output:**
+```
+ALTER TABLE
+```
+
+### What a check cannot do
+| Not allowed | Instead use |
+|---|---|
+| Look at **other rows** or other tables (a subquery) | A foreign key, a trigger, or a unique constraint |
+| Depend on values that **change over time** (`NOW()`) | A default, or application logic |
+
+> ⚠️ **Warning:** **`NULL` passes a `CHECK`.** Pair it with `NOT NULL` whenever a missing value would be a problem.
+
+> ⚠️ **Warning:** A fixed list in a check (`IN ('Clothes', ...)`) is hard to change later. If the list grows often, a separate table with a foreign key (topic 27) is easier to maintain.
+
+> ⚠️ **Warning:** `CHECK` rejects only when the condition is **false**. If your logic has holes, bad rows with an unknown result get through.
+
+> 🏆 **Golden Rule:** **Write the rule as a true statement about every valid row.** `CHECK (price > 0)` reads as "every price is positive." Name it, and add `NOT NULL` if empty values aren't allowed.
