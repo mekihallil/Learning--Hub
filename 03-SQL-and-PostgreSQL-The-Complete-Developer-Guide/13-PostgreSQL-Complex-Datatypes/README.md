@@ -2137,3 +2137,151 @@ ALTER TABLE
 > ⚠️ **Warning:** `CHECK` rejects only when the condition is **false**. If your logic has holes, bad rows with an unknown result get through.
 
 > 🏆 **Golden Rule:** **Write the rule as a true statement about every valid row.** `CHECK (price > 0)` reads as "every price is positive." Name it, and add `NOT NULL` if empty values aren't allowed.
+
+
+
+
+
+## 🔗 103. Checks Over Multiple Columns
+
+**What it does:** A **table-level `CHECK`** compares **two or more columns of the same row**, such as "the delivery date must come after the order date."
+**Why it is used:** Some rules only make sense **between** columns. A single-column check can't express them.
+**When to use it:** Start before end, sale price below regular price, "at least one contact method," or "if status is shipped then a ship date must exist."
+
+**Analogy:** A **hotel booking** where check-out must be after check-in. Neither date is wrong on its own, but the **pair** can be.
+
+### Create the table
+```sql
+DROP TABLE IF EXISTS orders;
+
+CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(40) NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  est_delivery TIMESTAMP NOT NULL,
+  CONSTRAINT delivery_after_creation CHECK (created_at < est_delivery)
+);
+```
+**Output:**
+```
+NOTICE:  table "orders" does not exist, skipping
+DROP TABLE
+CREATE TABLE
+```
+The `CHECK` sits on its own line, **after** the columns, so it can mention several of them.
+
+### Valid and invalid rows
+```sql
+INSERT INTO orders (name, created_at, est_delivery)
+VALUES ('Laptop', '2026-11-20 10:00', '2026-11-25 10:00');
+```
+**Output:**
+```
+INSERT 0 1
+```
+```sql
+INSERT INTO orders (name, created_at, est_delivery)
+VALUES ('Phone', '2026-11-20 10:00', '2026-11-18 10:00');
+```
+**Output:**
+```
+ERROR:  new row for relation "orders" violates check constraint "delivery_after_creation"
+DETAIL:  Failing row contains (2, Phone, 2026-11-20 10:00:00, 2026-11-18 10:00:00).
+```
+The same moment is also rejected, because the rule uses `<`, not `<=`:
+```sql
+INSERT INTO orders (name, created_at, est_delivery)
+VALUES ('Tablet', '2026-11-20 10:00', '2026-11-20 10:00');
+```
+**Output:**
+```
+ERROR:  new row for relation "orders" violates check constraint "delivery_after_creation"
+```
+
+### Checks also run on `UPDATE`
+```sql
+UPDATE orders SET est_delivery = '2026-11-01 10:00' WHERE name = 'Laptop';
+```
+**Output:**
+```
+ERROR:  new row for relation "orders" violates check constraint "delivery_after_creation"
+```
+
+### A "sale price" rule
+```sql
+CREATE TEMP TABLE items (
+  id SERIAL PRIMARY KEY,
+  price INTEGER NOT NULL,
+  sale_price INTEGER,
+  CONSTRAINT sale_below_price CHECK (sale_price IS NULL OR sale_price < price)
+);
+
+INSERT INTO items (price, sale_price) VALUES (100, 80), (100, NULL);
+INSERT INTO items (price, sale_price) VALUES (100, 120);
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 2
+ERROR:  new row for relation "items" violates check constraint "sale_below_price"
+DETAIL:  Failing row contains (3, 100, 120).
+```
+`sale_price IS NULL OR ...` allows items with no sale. Without it, a `NULL` comparison would be unknown (and pass anyway), but spelling it out makes the intent clear.
+
+### "At least one of these must be filled in"
+```sql
+CREATE TEMP TABLE contacts (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(40) NOT NULL,
+  email VARCHAR(80),
+  phone VARCHAR(20),
+  CONSTRAINT needs_contact CHECK (email IS NOT NULL OR phone IS NOT NULL)
+);
+
+INSERT INTO contacts (name, email) VALUES ('Sam', 'sam@example.com');
+INSERT INTO contacts (name) VALUES ('Alex');
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 1
+ERROR:  new row for relation "contacts" violates check constraint "needs_contact"
+DETAIL:  Failing row contains (2, Alex, null, null).
+```
+
+### Column-level vs table-level checks
+| | Column-level | Table-level |
+|---|---|---|
+| **Written** | Next to the column | After all the columns |
+| **Can mention** | Normally just that column | **Any columns** of the row |
+| **Example** | `price INTEGER CHECK (price > 0)` | `CHECK (created_at < est_delivery)` |
+| **Auto name** | `table_column_check` | `table_check` (or one you choose) |
+
+### One check or several?
+```sql
+-- One combined rule
+CHECK (price > 0 AND weight >= 0)
+
+-- Two separate rules: you learn exactly which one broke
+CONSTRAINT price_positive CHECK (price > 0),
+CONSTRAINT weight_not_negative CHECK (weight >= 0)
+```
+Separate, named checks give **more precise errors**.
+
+### Clean up the temporary demos
+The `TEMP` tables disappear on their own. Drop the real one when you're done:
+```sql
+DROP TABLE IF EXISTS orders;
+```
+**Output:**
+```
+DROP TABLE
+```
+
+> ⚠️ **Warning:** **If either column is `NULL`, the comparison is unknown and the row passes.** Make both columns `NOT NULL` (as above), or write the `NULL` case into the rule.
+
+> ⚠️ **Warning:** Use `<` or `<=` deliberately. Decide whether "same moment" should be allowed.
+
+> ⚠️ **Warning:** A check only sees **one row**. It can't compare a row with others, so "no two orders overlap" needs a different tool (an exclusion constraint, which comes later).
+
+> 🏆 **Golden Rule:** **Use a table-level `CHECK` when the rule is about the relationship between columns.** Name it, and keep the columns `NOT NULL` so the rule can't be dodged.
