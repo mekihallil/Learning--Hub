@@ -1869,3 +1869,124 @@ INSERT 0 0
 > ⚠️ **Warning:** If two users submit the same name at the exact same moment, only the **database** can reliably stop it. An app-level "does this name exist?" check alone can lose that race.
 
 > 🏆 **Golden Rule:** **If a value must be one of a kind, make it `UNIQUE`.** Let the database enforce it, then catch the error in your app and show a friendly message (topic 104).
+
+
+
+
+## 🧬 101. Multi-Column Uniqueness
+
+**What it does:** A unique constraint over **several columns together** means the **combination** must be unique, even though each column can repeat on its own.
+**Why it is used:** Sometimes uniqueness only makes sense in context. A shirt can exist in Clothes and in Toys, but you shouldn't have two "Shirt" products in Clothes.
+**When to use it:** Names unique per department, one review per user per product, a seat number unique per show.
+
+**Analogy:** A **phone book entry** is unique by first name **and** last name together. Many people are named Sam, and many are named Lee, but only one is Sam Lee.
+
+### Create the table
+```sql
+DROP TABLE IF EXISTS products;
+
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(40) NOT NULL,
+  department VARCHAR(40) NOT NULL,
+  price INTEGER NOT NULL,
+  UNIQUE (name, department)
+);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+```
+`UNIQUE (name, department)` is a **table-level** constraint, written on its own line.
+
+### Try it
+```sql
+INSERT INTO products (name, department, price) VALUES ('Shirt', 'Clothes', 20);
+INSERT INTO products (name, department, price) VALUES ('Shirt', 'Toys', 8);
+```
+**Output:**
+```
+INSERT 0 1
+INSERT 0 1
+```
+Same name, different department, so it's allowed.
+```sql
+INSERT INTO products (name, department, price) VALUES ('Shirt', 'Clothes', 25);
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "products_name_department_key"
+DETAIL:  Key (name, department)=(Shirt, Clothes) already exists.
+```
+Same name **and** same department, so it's rejected.
+```sql
+SELECT id, name, department, price FROM products ORDER BY id;
+```
+**Output:**
+```
+ id | name  | department | price
+----+-------+------------+-------
+  1 | Shirt | Clothes    |    20
+  2 | Shirt | Toys       |     8
+(2 rows)
+```
+
+### Which combinations are allowed?
+| name | department | Allowed? |
+|---|---|---|
+| Shirt | Clothes | ✅ first one |
+| Shirt | Toys | ✅ different department |
+| Hammer | Clothes | ✅ different name |
+| Shirt | Clothes | ❌ **exact repeat** |
+
+### Column-level vs table-level syntax
+| Style | Syntax | Covers |
+|---|---|---|
+| Column-level | `name VARCHAR(40) UNIQUE` | **One** column |
+| Table-level | `UNIQUE (name, department)` | **One or more** columns |
+
+Name it yourself for clearer errors:
+```sql
+ALTER TABLE products DROP CONSTRAINT products_name_department_key;
+ALTER TABLE products
+  ADD CONSTRAINT unique_name_per_department UNIQUE (name, department);
+```
+**Output:**
+```
+ALTER TABLE
+ALTER TABLE
+```
+
+### Two columns each unique on their own is different
+| Rule | Meaning |
+|---|---|
+| `UNIQUE (name), UNIQUE (department)` | No name repeats **and** no department repeats (very restrictive) |
+| `UNIQUE (name, department)` | Only the **pair** can't repeat |
+
+### Composite primary keys follow the same idea
+The join table from topic 23 uses one:
+```sql
+CREATE TEMP TABLE photos_tags (
+  photo_id INTEGER,
+  tag_id INTEGER,
+  PRIMARY KEY (photo_id, tag_id)
+);
+
+INSERT INTO photos_tags VALUES (1, 1), (1, 2), (2, 1);
+INSERT INTO photos_tags VALUES (1, 1);
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 3
+ERROR:  duplicate key value violates unique constraint "photos_tags_pkey"
+DETAIL:  Key (photo_id, tag_id)=(1, 1) already exists.
+```
+A photo can have many tags and a tag many photos, but the **same pairing** can't be recorded twice.
+
+> ⚠️ **Warning:** **`NULL` in any of the columns lets duplicates through**, because `NULL` never equals `NULL`. `('Shirt', NULL)` can be inserted many times. Make the columns `NOT NULL` if that matters.
+
+> ⚠️ **Warning:** Column **order** in the constraint doesn't change what's allowed, but it affects which lookups the index speeds up. `UNIQUE (name, department)` helps searches by `name` more than by `department` alone.
+
+> 🏆 **Golden Rule:** **Use multi-column `UNIQUE` when the rule is "this combination only once."** The error message lists the whole combination, so name the constraint to make it readable.
