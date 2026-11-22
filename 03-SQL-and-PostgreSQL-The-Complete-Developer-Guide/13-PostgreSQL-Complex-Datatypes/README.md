@@ -1742,3 +1742,130 @@ INSERT 0 1
 > ⚠️ **Warning:** A default isn't a rule. Nothing stops a later insert from supplying a different value. Use a `CHECK` if only certain values are allowed (topic 102).
 
 > 🏆 **Golden Rule:** **`NOT NULL DEFAULT ...` is the standard pairing**: the column is always filled, and callers only specify it when it differs from the usual.
+
+
+
+
+## 🔑 100. Applying a Unique Constraint to One Column
+
+**What it does:** `UNIQUE` on a column means **no two rows may share the same value** there. A duplicate insert or update is rejected.
+**Why it is used:** Some things must be one of a kind: usernames, email addresses, product names, order numbers. Without a rule, duplicates sneak in and later cause confusing bugs.
+**When to use it:** Any column that identifies something but isn't the primary key.
+
+**Analogy:** **Seat numbers in a theater.** Two tickets can't have the same seat, and the box office checks every new ticket against the ones already sold.
+
+### Create the table with a unique column
+```sql
+DROP TABLE IF EXISTS products;
+
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(40) NOT NULL UNIQUE,
+  department VARCHAR(40) NOT NULL,
+  price INTEGER NOT NULL
+);
+
+INSERT INTO products (name, department, price)
+VALUES ('Shirt', 'Clothes', 20);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+INSERT 0 1
+```
+
+### A duplicate is rejected
+```sql
+INSERT INTO products (name, department, price)
+VALUES ('Shirt', 'Toys', 15);
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "products_name_key"
+DETAIL:  Key (name)=(Shirt) already exists.
+```
+Postgres named the constraint for you: `<table>_<column>_key`. That name is what you'll see in errors, and what you'd use to drop it.
+
+### Case matters
+```sql
+INSERT INTO products (name, department, price)
+VALUES ('shirt', 'Clothes', 18);
+```
+**Output:**
+```
+INSERT 0 1
+```
+`'shirt'` and `'Shirt'` count as different. To block that, make a unique index on the lowercase value:
+```sql
+CREATE UNIQUE INDEX products_name_lower_idx ON products (LOWER(name));
+```
+That would fail here, because `'Shirt'` and `'shirt'` already exist, so clean the data first. Once it's in place, a case-different duplicate is rejected.
+
+### `NULL`s don't collide
+A unique column with no `NOT NULL` can hold **many `NULL`s**, because `NULL = NULL` is never true (topic 43):
+```sql
+CREATE TEMP TABLE people (email VARCHAR(50) UNIQUE);
+INSERT INTO people (email) VALUES (NULL), (NULL);
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 2
+```
+In PostgreSQL 15 and newer you can change that:
+```sql
+CREATE TEMP TABLE people2 (email VARCHAR(50) UNIQUE NULLS NOT DISTINCT);
+```
+Now a second `NULL` is rejected.
+
+### Inspect it
+```sql
+\d products
+```
+**Output (the part that matters):**
+```
+Indexes:
+    "products_pkey" PRIMARY KEY, btree (id)
+    "products_name_key" UNIQUE CONSTRAINT, btree (name)
+```
+A unique constraint is backed by an **index**, which also makes lookups by that column fast.
+
+### Add or remove it later
+```sql
+ALTER TABLE products ADD CONSTRAINT products_name_key UNIQUE (name);
+ALTER TABLE products DROP CONSTRAINT products_name_key;
+```
+**Gotcha:** adding it fails if duplicates already exist:
+```
+ERROR:  could not create unique index "products_name_key"
+DETAIL:  Key (name)=(Shirt) is duplicated.
+```
+Fix the duplicates first (rename or delete them), then add the constraint, as in topic 98.
+
+### Choose how to handle a duplicate in an insert
+```sql
+INSERT INTO products (name, department, price)
+VALUES ('Shirt', 'Toys', 15)
+ON CONFLICT (name) DO NOTHING;
+```
+**Output:**
+```
+INSERT 0 0
+```
+`INSERT 0 0` means nothing was inserted, and there was no error. (`ON CONFLICT ... DO UPDATE` lets you update the existing row instead.)
+
+### `UNIQUE` vs `PRIMARY KEY`
+| | `PRIMARY KEY` | `UNIQUE` |
+|---|---|---|
+| **Per table** | Exactly one | As many as you like |
+| **Allows `NULL`?** | Never | Yes |
+| **Purpose** | The row's identity | Another column that must not repeat |
+
+> ⚠️ **Warning:** A failed insert still uses up a `SERIAL` id (topic 26), so a duplicate error can leave a gap. That's normal.
+
+> ⚠️ **Warning:** Make unique columns `NOT NULL` too, unless you really want several `NULL`s.
+
+> ⚠️ **Warning:** If two users submit the same name at the exact same moment, only the **database** can reliably stop it. An app-level "does this name exist?" check alone can lose that race.
+
+> 🏆 **Golden Rule:** **If a value must be one of a kind, make it `UNIQUE`.** Let the database enforce it, then catch the error in your app and show a friendly message (topic 104).
