@@ -1335,3 +1335,121 @@ Both tools show the same facts. From here on, every topic changes the rules and 
 > ⚠️ **Warning:** A table you made in the GUI is the same as one made in SQL. Don't create the same table both ways, or you'll get `ERROR: relation "products" already exists`.
 
 > 🏆 **Golden Rule:** **Use the SQL tab as a free tutor.** Configure the table with clicks, then read the SQL, and soon you won't need the clicks.
+
+
+
+## 🚫 97. Applying a Null Constraint
+
+**What it does:** `NOT NULL` on a column means **every row must have a value there**. An insert or update that leaves it empty is rejected.
+**Why it is used:** Some facts are essential. A product with no name or no price is meaningless, and every query that touches it has to guard against the gap (topic 11).
+**When to use it:** Any column that must always be filled in. A good default is: **make columns `NOT NULL` unless "unknown" is genuinely meaningful.**
+
+**Analogy:** The **required fields** on a form, marked with a red asterisk. You can't submit without them.
+
+### Add `NOT NULL` when creating the table
+```sql
+DROP TABLE IF EXISTS products;
+
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(40) NOT NULL,
+  department VARCHAR(40) NOT NULL,
+  price INTEGER NOT NULL,
+  weight INTEGER
+);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+```
+Here `weight` stays optional on purpose, because some products might not have one recorded.
+
+### A valid row
+```sql
+INSERT INTO products (name, department, price, weight)
+VALUES ('Shirt', 'Clothes', 20, 1);
+```
+**Output:**
+```
+INSERT 0 1
+```
+
+### An explicit `NULL` is rejected
+```sql
+INSERT INTO products (name, department, price, weight)
+VALUES ('Hammer', 'Tools', NULL, 2);
+```
+**Output:**
+```
+ERROR:  null value in column "price" of relation "products" violates not-null constraint
+DETAIL:  Failing row contains (2, Hammer, Tools, null, 2).
+```
+
+### Leaving the column out is also rejected
+```sql
+INSERT INTO products (name, department)
+VALUES ('Hammer', 'Tools');
+```
+**Output:**
+```
+ERROR:  null value in column "price" of relation "products" violates not-null constraint
+DETAIL:  Failing row contains (3, Hammer, Tools, null, null).
+```
+Omitting a column is the same as giving it `NULL` (unless it has a default, topic 99).
+
+### Optional columns still accept `NULL`
+```sql
+INSERT INTO products (name, department, price)
+VALUES ('Pen', 'Stationery', 3);
+
+SELECT * FROM products;
+```
+**Output:**
+```
+INSERT 0 1
+ id | name  | department | price | weight
+----+-------+------------+-------+--------
+  1 | Shirt | Clothes    |     20 |      1
+  4 | Pen   | Stationery |      3 |
+(2 rows)
+```
+Ids 2 and 3 are missing because the failed inserts still used them (topic 26).
+
+### See the constraint
+```sql
+\d products
+```
+**Output (the part that matters):**
+```
+   Column   |         Type          | Collation | Nullable |               Default
+------------+-----------------------+-----------+----------+--------------------------------------
+ id         | integer               |           | not null | nextval('products_id_seq'::regclass)
+ name       | character varying(40) |           | not null |
+ department | character varying(40) |           | not null |
+ price      | integer               |           | not null |
+ weight     | integer               |           |          |
+```
+
+### Add or remove it later
+```sql
+ALTER TABLE products ALTER COLUMN weight SET NOT NULL;   -- add (may fail, see topic 98)
+ALTER TABLE products ALTER COLUMN weight DROP NOT NULL;  -- remove
+```
+**Output:**
+```
+ALTER TABLE
+```
+
+### Other places you'll meet it
+| Place | Behavior |
+|---|---|
+| Primary key | Implicitly `NOT NULL` (topic 24) |
+| Foreign key | Allows `NULL` unless you add `NOT NULL` (topic 31) |
+| `UPDATE ... SET col = NULL` | Also rejected |
+
+> ⚠️ **Warning:** **`NOT NULL` does not stop empty strings.** `''` is a value, not `NULL`, so a blank name slips through. Topic 102 adds a `CHECK` for that.
+
+> ⚠️ **Warning:** Don't make a column `NOT NULL` just to be safe if "unknown" is a real possibility. Forcing a fake value (like `0` for an unknown weight) is worse than `NULL`.
+
+> 🏆 **Golden Rule:** **Make a column `NOT NULL` by default.** Allow `NULL` only when "we don't know" is a real, meaningful state.
