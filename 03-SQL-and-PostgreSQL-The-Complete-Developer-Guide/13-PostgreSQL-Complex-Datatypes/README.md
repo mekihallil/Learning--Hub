@@ -1601,3 +1601,144 @@ ALTER TABLE
 > ⚠️ **Warning:** On a big production table, `SET NOT NULL` scans the whole table and takes a lock while it does. Plan it for a quiet moment.
 
 > 🏆 **Golden Rule:** **Clean the data first, then add the constraint.** Find the `NULL`s with `WHERE col IS NULL`, fix them, and wrap both steps in a transaction.
+
+
+
+
+## 🎁 99. Default Column Values
+
+**What it does:** `DEFAULT` gives a column a **fallback value** that Postgres uses whenever an insert doesn't provide one.
+**Why it is used:** It saves you typing the same value over and over, and it works nicely with `NOT NULL`: the column is required, but you don't have to supply it every time.
+**When to use it:** A standard starting value (a status of `'pending'`, a price of `999`, a flag of `true`) or an automatic timestamp.
+
+**Analogy:** The **pre-selected option** in a dropdown. If you don't change it, that's what gets submitted.
+
+### Set it up
+```sql
+DROP TABLE IF EXISTS products;
+
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(40) NOT NULL,
+  department VARCHAR(40) NOT NULL,
+  price INTEGER NOT NULL DEFAULT 999,
+  weight INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+```
+
+### Leave the column out, and the default is used
+```sql
+INSERT INTO products (name, department)
+VALUES ('Gift card', 'Misc');
+
+SELECT id, name, price, weight, created_at FROM products;
+```
+**Output (your timestamp shows the current moment):**
+```
+INSERT 0 1
+ id |   name    | price | weight |          created_at
+----+-----------+-------+--------+-------------------------------
+  1 | Gift card |   999 |        | 2026-11-20 10:30:00.123456+00
+(1 row)
+```
+`price` became `999`, and `created_at` was filled in automatically. `weight` has no default, so it's `NULL`.
+
+### Gotcha: an explicit `NULL` is **not** replaced by the default
+```sql
+INSERT INTO products (name, department, price)
+VALUES ('Mug', 'Kitchen', NULL);
+```
+**Output:**
+```
+ERROR:  null value in column "price" of relation "products" violates not-null constraint
+```
+(A `DETAIL:` line with the failing row follows.) `NULL` is a value you **chose**, so the default doesn't step in.
+
+**Ask for the default explicitly with the `DEFAULT` keyword:**
+```sql
+INSERT INTO products (name, department, price)
+VALUES ('Mug', 'Kitchen', DEFAULT);
+```
+**Output:**
+```
+INSERT 0 1
+```
+
+### Change a default later: existing rows are not touched
+```sql
+ALTER TABLE products ALTER COLUMN weight SET DEFAULT 1;
+
+INSERT INTO products (name, department)
+VALUES ('Pen', 'Stationery');
+
+SELECT name, price, weight FROM products ORDER BY id;
+```
+**Output:**
+```
+ALTER TABLE
+INSERT 0 1
+   name    | price | weight
+-----------+-------+--------
+ Gift card |   999 |
+ Mug       |   999 |
+ Pen       |   999 |      1
+(3 rows)
+```
+Only **new** rows get `weight = 1`. The older rows stay `NULL`. If you want them changed too, run an `UPDATE`.
+
+### Remove a default
+```sql
+ALTER TABLE products ALTER COLUMN weight DROP DEFAULT;
+```
+**Output:**
+```
+ALTER TABLE
+```
+
+### Useful kinds of default
+| Default | Example | Result |
+|---|---|---|
+| A constant number | `price INTEGER DEFAULT 999` | `999` |
+| A constant text | `status VARCHAR(20) DEFAULT 'pending'` | `'pending'` |
+| A boolean | `is_active BOOLEAN DEFAULT true` | `t` |
+| The current time | `created_at TIMESTAMPTZ DEFAULT NOW()` | The moment of the insert |
+| The current date | `signed_up DATE DEFAULT CURRENT_DATE` | Today |
+| A calculation | `expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '30 days'` | 30 days from the insert |
+
+### Insert a row made entirely of defaults
+```sql
+CREATE TEMP TABLE counters (id SERIAL PRIMARY KEY, hits INTEGER DEFAULT 0);
+INSERT INTO counters DEFAULT VALUES;
+SELECT * FROM counters;
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 1
+ id | hits
+----+------
+  1 |    0
+(1 row)
+```
+
+### How `NOT NULL` and `DEFAULT` work together
+| Setup | Behavior |
+|---|---|
+| `NOT NULL`, no default | The caller **must** provide a value |
+| `NOT NULL DEFAULT x` | Required, but filled in automatically if left out |
+| Nullable, `DEFAULT x` | Filled with `x` if left out. An explicit `NULL` still stores `NULL` |
+| Nullable, no default | Left out means `NULL` |
+
+> ⚠️ **Warning:** An **explicit `NULL` overrides the default.** Only leaving the column out (or writing `DEFAULT`) triggers it.
+
+> ⚠️ **Warning:** `SET DEFAULT` doesn't change existing rows, which is easy to forget.
+
+> ⚠️ **Warning:** A default isn't a rule. Nothing stops a later insert from supplying a different value. Use a `CHECK` if only certain values are allowed (topic 102).
+
+> 🏆 **Golden Rule:** **`NOT NULL DEFAULT ...` is the standard pairing**: the column is always filled, and callers only specify it when it differs from the usual.
