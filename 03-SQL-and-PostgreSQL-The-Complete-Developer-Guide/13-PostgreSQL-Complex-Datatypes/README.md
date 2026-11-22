@@ -1149,3 +1149,88 @@ Postgres clamps to the last day of February.
 > ⚠️ **Warning:** Subtracting two `TIMESTAMPTZ` values across a daylight-saving change gives the **real** elapsed time, which may differ from the clock difference by an hour.
 
 > 🏆 **Golden Rule:** **Let `INTERVAL` do the counting.** Add it to dates, subtract timestamps to get one, and use `EXTRACT(EPOCH ...)` when you need a plain number.
+
+
+
+
+## 🛡️ 95. Thinking About Validation
+
+**What it does:** Validation means **refusing bad data before it is stored**. In a database, the rules that do this are called **constraints**: required values, defaults, uniqueness, and custom checks.
+**Why it is used:** Data types alone (topic 88) only stop the wrong **kind** of value. They won't stop a negative price, a missing name, or the same product entered twice.
+**When to use it:** At design time, **before** the table has real data in it (topic 21).
+
+**Analogy:** A **bouncer at the door** of the table. The types say "no animals," and constraints add "no one under 18, no one without a ticket, no one who's already inside."
+
+### What a table without rules lets in
+```sql
+DROP TABLE IF EXISTS products;
+
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(40),
+  department VARCHAR(40),
+  price INTEGER,
+  weight INTEGER
+);
+
+INSERT INTO products (name, department, price, weight)
+VALUES
+  ('Shirt', 'Clothes', 20, 1),
+  ('Shirt', 'Clothes', 20, 1),
+  (NULL, NULL, NULL, NULL),
+  ('Hammer', 'Tools', -15, 2),
+  ('Teddy bear', 'Toys', 12, -3);
+```
+**Output:**
+```
+NOTICE:  table "products" does not exist, skipping
+DROP TABLE
+CREATE TABLE
+INSERT 0 5
+```
+(The `NOTICE` appears only if the table didn't exist. If it did, you'll see just `DROP TABLE`.)
+```sql
+SELECT * FROM products;
+```
+**Output:**
+```
+ id |    name    | department | price | weight
+----+------------+------------+-------+--------
+  1 | Shirt      | Clothes    |    20 |      1
+  2 | Shirt      | Clothes    |    20 |      1
+  3 |            |            |       |
+  4 | Hammer     | Tools      |   -15 |      2
+  5 | Teddy bear | Toys       |    12 |     -3
+(5 rows)
+```
+Every row was accepted, and four of the five are wrong:
+
+| Row | Problem |
+|---|---|
+| 1 and 2 | The **same product twice** |
+| 3 | A completely **empty** product |
+| 4 | A **negative price** |
+| 5 | A **negative weight** |
+
+### Turn the problems into rules
+| Problem | Rule | Tool | Topic |
+|---|---|---|---|
+| Missing name, department, or price | Must have a value | `NOT NULL` | 97 and 98 |
+| Missing price should fall back to something | Use a standard value | `DEFAULT` | 99 |
+| Same product twice | No duplicates | `UNIQUE` | 100 and 101 |
+| Negative price or weight | Value must make sense | `CHECK` | 102 and 103 |
+
+### Three places a rule can live
+| Layer | Example | Strength |
+|---|---|---|
+| **The form** | HTML `required`, `min="1"` | Friendly, but a user can bypass it |
+| **Your app** | Zod and Server Actions (Next.js topics 62 and 73) | Good error messages, but only protects data entered **through the app** |
+| **The database** | Constraints (this section) | **Cannot be bypassed**, because every write goes through it |
+
+The database layer matters most because data arrives from many places: your app, a script, a teammate with `psql`, a future second app. Topic 104 ties the three layers together.
+
+> ⚠️ **Warning:** **Add constraints early.** Adding a rule to a table that already contains bad rows fails until you clean the data first (topics 98, 100, and 102).
+
+> ⚠️ **Warning:** Validation in the app is **not** a substitute for constraints. It only protects the paths that go through the app.
+
+> 🏆 **Golden Rule:** **Decide the rules before the data arrives.** For each column ask: can it be empty, does it need a default, must it be unique, and what values make sense?
