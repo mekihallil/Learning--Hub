@@ -1453,3 +1453,151 @@ ALTER TABLE
 > ⚠️ **Warning:** Don't make a column `NOT NULL` just to be safe if "unknown" is a real possibility. Forcing a fake value (like `0` for an unknown weight) is worse than `NULL`.
 
 > 🏆 **Golden Rule:** **Make a column `NOT NULL` by default.** Allow `NULL` only when "we don't know" is a real, meaningful state.
+
+
+
+
+## 🪤 98. Solving a Gotcha with Null Constraints
+
+**What it does:** Explains the most common `NOT NULL` problem: **adding the constraint to a table that already contains `NULL`s fails**, and shows how to fix the data first.
+**Why it is used:** In real life tables **already have data**. You usually add constraints later, and the data is rarely clean.
+**When to use it:** Any time `ALTER TABLE ... SET NOT NULL` throws an error.
+
+**Analogy:** A new "no one under 18" rule at a club that already has teenagers inside. You must first deal with the people already in (let them out or change their status) before the rule can take effect.
+
+### Set it up: a table with existing `NULL`s
+```sql
+DROP TABLE IF EXISTS products;
+
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(40),
+  department VARCHAR(40),
+  price INTEGER,
+  weight INTEGER
+);
+
+INSERT INTO products (name, department, price, weight)
+VALUES
+  ('Shirt', 'Clothes', 20, 1),
+  ('Hammer', 'Tools', NULL, 2),
+  ('Teddy bear', 'Toys', 12, NULL);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+INSERT 0 3
+```
+
+### The gotcha
+```sql
+ALTER TABLE products ALTER COLUMN price SET NOT NULL;
+```
+**Output:**
+```
+ERROR:  column "price" of relation "products" contains null values
+```
+Postgres checks **every existing row**. The Hammer has no price, so the rule can't be applied.
+
+### The fix, in three steps
+**Step 1: find the offending rows.**
+```sql
+SELECT * FROM products WHERE price IS NULL;
+```
+**Output:**
+```
+ id |  name  | department | price | weight
+----+--------+------------+-------+--------
+  2 | Hammer | Tools      |       |      2
+(1 row)
+```
+**Step 2: decide what to do with them.**
+
+| Choice | When it fits |
+|---|---|
+| Give them a real value (`UPDATE`) | You know the right value, or a sensible placeholder |
+| Delete the rows (`DELETE`) | The rows are junk |
+| Leave the column nullable | "Unknown" really is meaningful |
+
+**Step 3: fix the data, then add the constraint.** Do both inside a transaction, so nothing is half-done:
+```sql
+BEGIN;
+
+UPDATE products SET price = 10 WHERE price IS NULL;
+ALTER TABLE products ALTER COLUMN price SET NOT NULL;
+
+COMMIT;
+```
+**Output:**
+```
+BEGIN
+UPDATE 1
+ALTER TABLE
+COMMIT
+```
+**Check:**
+```sql
+SELECT id, name, price FROM products ORDER BY id;
+```
+**Output:**
+```
+ id |    name    | price
+----+------------+-------
+  1 | Shirt      |    20
+  2 | Hammer     |    10
+  3 | Teddy bear |    12
+(3 rows)
+```
+(`10` is just a placeholder for the exercise. In real data, use the true value.)
+
+### A second gotcha: adding a new `NOT NULL` column
+```sql
+ALTER TABLE products ADD COLUMN sku VARCHAR(20) NOT NULL;
+```
+**Output:**
+```
+ERROR:  column "sku" of relation "products" contains null values
+```
+The new column starts empty for **every existing row**. Give it a default so those rows get a value (topic 99):
+```sql
+ALTER TABLE products ADD COLUMN sku VARCHAR(20) NOT NULL DEFAULT 'unknown';
+```
+**Output:**
+```
+ALTER TABLE
+```
+
+### A third gotcha: the "empty" value that isn't `NULL`
+```sql
+INSERT INTO products (name, department, price)
+VALUES ('', 'Tools', 5);
+```
+**Output:**
+```
+INSERT 0 1
+```
+`NOT NULL` happily accepted an empty string. To stop that you need a `CHECK` (topic 102):
+```sql
+-- Clean up first, then the rule can be added
+DELETE FROM products WHERE name = '';
+ALTER TABLE products ADD CONSTRAINT name_not_blank CHECK (LENGTH(TRIM(name)) > 0);
+```
+**Output:**
+```
+DELETE 1
+ALTER TABLE
+```
+
+### Troubleshooting summary
+| Error | Cause | Fix |
+|---|---|---|
+| `column "x" of relation "t" contains null values` | Existing rows have `NULL` | Update or delete them, then retry |
+| Same error on `ADD COLUMN ... NOT NULL` | New column is empty for old rows | Add a `DEFAULT` |
+| Blank strings still get in | `''` isn't `NULL` | Add a `CHECK` |
+
+> ⚠️ **Warning:** Replacing `NULL` with a fake value (`0`, `'unknown'`) can **hide** a real data problem. Make sure the placeholder is honest.
+
+> ⚠️ **Warning:** On a big production table, `SET NOT NULL` scans the whole table and takes a lock while it does. Plan it for a quiet moment.
+
+> 🏆 **Golden Rule:** **Clean the data first, then add the constraint.** Find the `NULL`s with `WHERE col IS NULL`, fix them, and wrap both steps in a transaction.
