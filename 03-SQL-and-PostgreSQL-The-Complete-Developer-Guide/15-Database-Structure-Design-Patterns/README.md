@@ -435,3 +435,296 @@ Drop them in the **reverse** order (topic 33).
 > ⚠️ **Warning:** `updated_at DEFAULT NOW()` only sets the value when a row is **inserted**. It doesn't change by itself on an `UPDATE`. Update it in your app, or use a trigger (a later topic).
 
 > 🏆 **Golden Rule:** **Tables, relationships, rules, build order.** If you can write all four on one page, you can build the database without surprises.
+
+
+
+
+## 🔨 109. Rebuilding Some Schema
+
+**What it does:** Turns the plan from topic 108 into real SQL: it **rebuilds** `users`, `posts`, `comments`, and `likes` with every constraint from sections 95 to 104, in a **new database**, then proves each rule works.
+**Why it is used:** The earlier versions of these tables (topics 27 and 35) had only foreign keys. Now you can add what real apps need: required columns, defaults, unique values, ranges, and cross-column checks.
+**When to use it:** Whenever you move from "tables that work" to "tables that protect themselves."
+
+**Analogy:** Renovating a house you built quickly. The rooms are the same, but now there are locks on the doors, smoke alarms, and fuse boxes.
+
+### Step 1: a fresh database
+This leaves `photo_app` alone:
+```sql
+CREATE DATABASE social_app;
+```
+**Output:**
+```
+CREATE DATABASE
+```
+```sql
+\c social_app
+```
+**Output:**
+```
+You are now connected to database "social_app" as user "postgres".
+```
+(Prefer to rebuild inside `photo_app`? Drop the old tables first, children before parents: `comments`, then `photos`, then `users`.)
+
+### What changed from the old versions
+| Table | Before (topics 27 and 35) | After |
+|---|---|---|
+| `users` | Just `id`, `username` | Timestamps, `UNIQUE` username, contact `CHECK` |
+| `photos` becomes `posts` | `url`, `user_id` | Required `url`, caption, validated coordinates |
+| `comments` | `contents`, two foreign keys | `NOT NULL` everywhere, `CASCADE` |
+| (new) `likes` | Didn't exist | Two nullable keys with an "exactly one" check |
+
+### Step 2: `users`
+```sql
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  username VARCHAR(30) NOT NULL UNIQUE,
+  bio VARCHAR(400),
+  avatar VARCHAR(200),
+  email VARCHAR(255),
+  phone VARCHAR(25),
+  CONSTRAINT users_need_contact CHECK (email IS NOT NULL OR phone IS NOT NULL)
+);
+```
+**Output:**
+```
+CREATE TABLE
+```
+
+### Step 3: `posts`
+```sql
+CREATE TABLE posts (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  url VARCHAR(200) NOT NULL,
+  caption VARCHAR(240),
+  lat DOUBLE PRECISION,
+  lng DOUBLE PRECISION,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT posts_lat_range CHECK (lat BETWEEN -90 AND 90),
+  CONSTRAINT posts_lng_range CHECK (lng BETWEEN -180 AND 180)
+);
+```
+**Output:**
+```
+CREATE TABLE
+```
+Coordinates are measurements, so `DOUBLE PRECISION` fits (topic 89). A `NULL` coordinate **passes** the checks (topic 102), which is what we want, since location is optional.
+
+### Step 4: `comments`
+```sql
+CREATE TABLE comments (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  contents VARCHAR(240) NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE
+);
+```
+**Output:**
+```
+CREATE TABLE
+```
+
+### Step 5: `likes`, the tricky one
+```sql
+CREATE TABLE likes (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+  comment_id INTEGER REFERENCES comments(id) ON DELETE CASCADE,
+  CONSTRAINT likes_exactly_one_target CHECK (num_nonnulls(post_id, comment_id) = 1)
+);
+```
+**Output:**
+```
+CREATE TABLE
+```
+`num_nonnulls(a, b)` counts how many arguments are **not** `NULL`. Requiring it to equal `1` means exactly one target is filled in.
+
+**Why not just `UNIQUE (user_id, post_id, comment_id)` to stop double likes?** Because of `NULL` (topic 101):
+```sql
+CREATE TEMP TABLE naive_likes (
+  user_id INTEGER, post_id INTEGER, comment_id INTEGER,
+  UNIQUE (user_id, post_id, comment_id)
+);
+INSERT INTO naive_likes VALUES (2, 1, NULL), (2, 1, NULL);
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 2
+```
+The same like went in **twice**, because `NULL` never equals `NULL`, so the rows never look like duplicates.
+
+**The fix: two partial unique indexes**, each covering only the rows where its column is filled in:
+```sql
+CREATE UNIQUE INDEX likes_user_post_idx
+  ON likes (user_id, post_id) WHERE post_id IS NOT NULL;
+
+CREATE UNIQUE INDEX likes_user_comment_idx
+  ON likes (user_id, comment_id) WHERE comment_id IS NOT NULL;
+```
+**Output:**
+```
+CREATE INDEX
+CREATE INDEX
+```
+(On PostgreSQL 15 and newer, `UNIQUE NULLS NOT DISTINCT (user_id, post_id, comment_id)` is another way to do it. The partial indexes work on every version.)
+
+### Verify the structure
+```sql
+\dt
+```
+**Output:**
+```
+          List of relations
+ Schema |   Name   | Type  |  Owner
+--------+----------+-------+----------
+ public | comments | table | postgres
+ public | likes    | table | postgres
+ public | posts    | table | postgres
+ public | users    | table | postgres
+(4 rows)
+```
+```sql
+\d likes
+```
+Look for the `Check constraints:` and `Foreign-key constraints:` sections, and for the two unique indexes under `Indexes:`.
+
+### Step 6: load valid data
+```sql
+INSERT INTO users (username, email, phone)
+VALUES
+  ('monahan93', 'monahan@example.com', NULL),
+  ('pferrer', NULL, '555-0102'),
+  ('si93onis', 'si93@example.com', NULL);
+
+INSERT INTO posts (url, caption, lat, lng, user_id)
+VALUES
+  ('http://one.jpg', 'Sunrise', 35.68, 139.69, 1),
+  ('http://two.jpg', 'Lunch', NULL, NULL, 2);
+
+INSERT INTO comments (contents, user_id, post_id)
+VALUES ('Nice shot!', 2, 1), ('Love this', 3, 1);
+
+INSERT INTO likes (user_id, post_id) VALUES (2, 1);
+INSERT INTO likes (user_id, comment_id) VALUES (3, 1);
+```
+**Output:**
+```
+INSERT 0 3
+INSERT 0 2
+INSERT 0 2
+INSERT 0 1
+INSERT 0 1
+```
+
+### Step 7: break every rule on purpose
+Each of these **should fail**. If one succeeds, the rule isn't working.
+
+**A user with no way to be contacted:**
+```sql
+INSERT INTO users (username) VALUES ('nobody');
+```
+**Output:**
+```
+ERROR:  new row for relation "users" violates check constraint "users_need_contact"
+```
+(A `DETAIL:` line with the failing row follows.)
+
+**A duplicate username:**
+```sql
+INSERT INTO users (username, email) VALUES ('pferrer', 'other@example.com');
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "users_username_key"
+DETAIL:  Key (username)=(pferrer) already exists.
+```
+
+**A latitude off the globe:**
+```sql
+INSERT INTO posts (url, lat, lng, user_id) VALUES ('http://bad.jpg', 95, 0, 1);
+```
+**Output:**
+```
+ERROR:  new row for relation "posts" violates check constraint "posts_lat_range"
+```
+
+**A post with a user that doesn't exist:**
+```sql
+INSERT INTO posts (url, user_id) VALUES ('http://ghost.jpg', 999);
+```
+**Output:**
+```
+ERROR:  insert or update on table "posts" violates foreign key constraint "posts_user_id_fkey"
+DETAIL:  Key (user_id)=(999) is not present in table "users".
+```
+
+**A like with two targets, and a like with none:**
+```sql
+INSERT INTO likes (user_id, post_id, comment_id) VALUES (1, 1, 1);
+INSERT INTO likes (user_id) VALUES (1);
+```
+**Output:**
+```
+ERROR:  new row for relation "likes" violates check constraint "likes_exactly_one_target"
+ERROR:  new row for relation "likes" violates check constraint "likes_exactly_one_target"
+```
+
+**Liking the same post twice:**
+```sql
+INSERT INTO likes (user_id, post_id) VALUES (2, 1);
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "likes_user_post_idx"
+DETAIL:  Key (user_id, post_id)=(2, 1) already exists.
+```
+
+### Step 8: check the data, then test the cascade
+```sql
+SELECT id, user_id, post_id, comment_id FROM likes ORDER BY id;
+```
+**Output:**
+```
+ id | user_id | post_id | comment_id
+----+---------+---------+------------
+  1 |       2 |       1 |
+  2 |       3 |         |          1
+(2 rows)
+```
+Blank cells are `NULL`. The failed inserts above used up some ids, but they stored no rows.
+
+**Delete one post and see what disappears:**
+```sql
+DELETE FROM posts WHERE id = 1;
+
+SELECT
+  (SELECT COUNT(*) FROM comments) AS comments,
+  (SELECT COUNT(*) FROM likes) AS likes;
+```
+**Output:**
+```
+DELETE 1
+ comments | likes
+----------+-------
+        0 |     0
+(1 row)
+```
+Deleting post 1 removed its two comments, the like on the post, **and** the like on one of those comments. That's the cascade chain from topic 35.
+
+> ⚠️ **Warning:** **Failed inserts still consume `SERIAL` ids** (topic 26), so your ids may skip numbers. That's normal and harmless.
+
+> ⚠️ **Warning:** **Test the failures, not just the successes.** A constraint that never rejects anything is a constraint you haven't verified.
+
+> ⚠️ **Warning:** `updated_at` doesn't change by itself when you `UPDATE` a row. Set it yourself in the query (`SET updated_at = NOW()`), or use a trigger (a later topic).
+
+> ⚠️ **Warning:** `num_nonnulls` is PostgreSQL-specific. In other databases you'd write the check with `CASE`, such as `CHECK ((post_id IS NOT NULL AND comment_id IS NULL) OR (post_id IS NULL AND comment_id IS NOT NULL))`.
+
+> 🏆 **Golden Rule:** **Rebuild the tables, then try to break them.** If every bad row you throw at the schema is refused, and every valid row goes in, the design is doing its job.
