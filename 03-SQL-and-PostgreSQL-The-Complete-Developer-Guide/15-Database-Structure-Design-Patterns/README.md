@@ -193,3 +193,148 @@ You can also create new tables inside the ERD tool and generate the SQL. (Menu l
 > ⚠️ **Warning:** Free design tools may limit the number of tables or diagrams, and cloud tools store your design online. Avoid putting anything confidential in a table or column name.
 
 > 🏆 **Golden Rule:** **Draw first, export second, then edit.** Let the tool give you the skeleton, and add the constraints it can't draw.
+
+
+
+
+
+## ⌨️ 107. A Config-based Schema Designer
+
+**What it does:** Instead of dragging boxes, you **describe your schema in text**, and the tool draws the diagram for you. The best-known option is **dbdiagram.io**, which uses a small language called **DBML** (Database Markup Language).
+**Why it is used:** Text is faster to write and edit than clicking, it can be **copied, reviewed, and stored in Git** (just like your code), and you can see what changed between versions.
+**When to use it:** When you want the design to live in your repository next to the code, or when you're comfortable typing and find the mouse slow.
+
+**Analogy:** A **recipe card** instead of a cooking video. It's short, exact, easy to share and edit, and the "picture" gets made from the words.
+
+### DBML in one table
+| You want | Write |
+|---|---|
+| A table | `Table users { ... }` |
+| A column | `username varchar(30)` |
+| Column settings | `[not null, unique]` |
+| A primary key | `[pk]` (or `[primary key]`) |
+| An auto-counting id | `[pk, increment]` |
+| A default | ``[default: `now()`]`` (backticks for expressions) |
+| A relationship | `Ref: posts.user_id > users.id` |
+| A delete rule | `Ref: ... [delete: cascade]` |
+
+### The four relationship symbols
+| Symbol | Meaning | Example |
+|---|---|---|
+| `>` | **Many-to-one** | `posts.user_id > users.id` (many posts, one user) |
+| `<` | **One-to-many** | `users.id < posts.user_id` (one user, many posts) |
+| `-` | **One-to-one** | `users.id - profiles.user_id` |
+| `<>` | **Many-to-many** | `authors.id <> books.id` |
+
+The `>` and `<` arrows say the same thing from opposite sides (topic 22). The "many" side is the one the arrow's wide end faces. For a normal foreign key, write it as `child.fk > parent.id`.
+
+### The first four tables in DBML
+```dbml
+Project social_app {
+  database_type: 'PostgreSQL'
+}
+
+Table users {
+  id integer [pk, increment]
+  created_at timestamptz [not null, default: `now()`]
+  username varchar(30) [not null, unique]
+  email varchar(255)
+  phone varchar(25)
+}
+
+Table posts {
+  id integer [pk, increment]
+  created_at timestamptz [not null, default: `now()`]
+  url varchar(200) [not null]
+  caption varchar(240)
+  user_id integer [not null]
+}
+
+Table comments {
+  id integer [pk, increment]
+  created_at timestamptz [not null, default: `now()`]
+  contents varchar(240) [not null]
+  user_id integer [not null]
+  post_id integer [not null]
+}
+
+Ref: posts.user_id > users.id [delete: cascade]
+Ref: comments.user_id > users.id [delete: cascade]
+Ref: comments.post_id > posts.id [delete: cascade]
+```
+Paste that into the editor on dbdiagram.io and three connected boxes appear.
+
+### Inline relationships (shorter)
+You can also put the link on the column itself:
+```dbml
+Table posts {
+  id integer [pk, increment]
+  user_id integer [not null, ref: > users.id]
+}
+```
+Use the standalone `Ref:` lines when you want a delete rule or several refs together.
+
+### Many-to-many: with a join table
+```dbml
+Table post_hashtags {
+  post_id integer [not null]
+  hashtag_id integer [not null]
+
+  indexes {
+    (post_id, hashtag_id) [pk]
+  }
+}
+
+Ref: post_hashtags.post_id > posts.id
+Ref: post_hashtags.hashtag_id > hashtags.id
+```
+That's the join-table pattern from topic 23, with a composite primary key (topic 101).
+
+### Get SQL out of it
+**In the browser:** use the **Export** menu on dbdiagram.io and choose **PostgreSQL**.
+
+**From the command line,** with the official DBML CLI (needs Node.js):
+```bash
+npm install -g @dbml/cli
+dbml2sql schema.dbml --postgres > schema.sql
+```
+**Output (the start of `schema.sql`, typical shape):**
+```sql
+CREATE TABLE "users" (
+  "id" SERIAL PRIMARY KEY,
+  "created_at" timestamptz NOT NULL DEFAULT (now()),
+  "username" varchar(30) UNIQUE NOT NULL,
+  "email" varchar(255),
+  "phone" varchar(25)
+);
+...
+ALTER TABLE "posts" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE;
+```
+You can also go the other way and convert existing SQL into DBML, which is handy for documenting a database that already exists.
+
+### Drag-and-drop vs config-based
+| | Visual tool (topic 106) | Config-based (this topic) |
+|---|---|---|
+| **Create tables** | Click and type in dialogs | Type text |
+| **Speed for big schemas** | Slower | ✅ Faster |
+| **Store in Git** | Awkward (export images) | ✅ A plain text file |
+| **Review changes** | Hard to compare two pictures | ✅ A normal `git diff` |
+| **Learning curve** | Almost none | A few minutes of syntax |
+| **Best for** | Exploring and presenting | Keeping a design as the source of truth |
+
+### Keep it in your repository
+```bash
+git add schema.dbml
+git commit -m "docs(db): add DBML schema for social app"
+```
+Your Git skills from the start of these notes apply directly.
+
+> ⚠️ **Warning:** **DBML isn't full PostgreSQL.** Some PostgreSQL features (such as partial unique indexes, or checks that use functions like `num_nonnulls`) may not export, so plan to **hand-edit** the generated SQL, as in topic 109.
+
+> ⚠️ **Warning:** A `.dbml` file is a **drawing, not the database**. Changing it doesn't change PostgreSQL. You still run SQL, and you must keep the two in sync yourself.
+
+> ⚠️ **Warning:** Always check the **column types** in the export. DBML accepts any type name you type, so `varchar(30)` is passed through, and a typo like `varchr` won't be caught until you run the SQL.
+
+> ⚠️ **Warning:** The tools evolve (syntax additions, plan limits). Check the DBML docs at dbml.dbdiagram.io/docs if a setting isn't recognized.
+
+> 🏆 **Golden Rule:** **Describe the schema in text, store it in Git, and generate the SQL from it.** Treat the file as the readable blueprint, and the SQL as the final build.
