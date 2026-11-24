@@ -338,3 +338,100 @@ Your Git skills from the start of these notes apply directly.
 > ⚠️ **Warning:** The tools evolve (syntax additions, plan limits). Check the DBML docs at dbml.dbdiagram.io/docs if a setting isn't recognized.
 
 > 🏆 **Golden Rule:** **Describe the schema in text, store it in Git, and generate the SQL from it.** Treat the file as the readable blueprint, and the SQL as the final build.
+
+
+
+
+## 📋 108. Here's the Plan
+
+**What it does:** The **finished design** for the social photo app: every table, its columns, its relationships, its rules, and the **order to build them in**. Topics 105 to 107 were the how, and this is the result.
+**Why it is used:** Having the whole plan on one page means topic 109 (and the rest) is just typing it in. It's also the checklist you'll verify the finished database against.
+**When to use it:** As the reference while you build. This is the version of the plan I wrote for these notes, so adapt it if your course differs.
+
+**Analogy:** The **bill of materials** on a construction site. Every part, every connection, and the order to assemble them, written down before the first nail.
+
+### The diagram
+```
+                 ┌───────────┐
+          ┌─────<│  followers│>─────┐       (users follow users)
+          │      └───────────┘      │
+          │                         │
+        ┌─┴─────┐ 1          * ┌────┴──┐
+        │ users │──────────────<│ posts │──────────< post_hashtags >──── hashtags
+        └─┬──┬──┘               └───┬───┘
+          │  │ 1             *      │ 1
+          │  └─────────────<┌───────┴──┐
+          │                 │ comments │
+          │                 └────┬─────┘
+          │ 1            *       │
+          └──────────────< likes >┘   (a like targets a post OR a comment)
+```
+
+### The tables
+| Table | Columns | Notes |
+|---|---|---|
+| **users** | `id`, `created_at`, `updated_at`, `username`, `bio`, `avatar`, `email`, `phone` | `username` is unique, and at least one of `email` / `phone` is required |
+| **posts** | `id`, `created_at`, `updated_at`, `url`, `caption`, `lat`, `lng`, `user_id` | Coordinates are optional but must be in range |
+| **comments** | `id`, `created_at`, `updated_at`, `contents`, `user_id`, `post_id` | Belongs to one user and one post |
+| **likes** | `id`, `created_at`, `user_id`, `post_id`, `comment_id` | **Exactly one** of `post_id` / `comment_id` is filled |
+| **followers** | `leader_id`, `follower_id`, `created_at` | Join table, and the primary key is the **pair** |
+| **hashtags** | `id`, `created_at`, `title` | `title` is unique |
+| **post_hashtags** | `post_id`, `hashtag_id` | Join table, and the primary key is the **pair** |
+
+### The relationships
+| Relationship | Type | Foreign key | On delete |
+|---|---|---|---|
+| A user has many posts | One-to-many | `posts.user_id` → `users.id` | `CASCADE` |
+| A user writes many comments | One-to-many | `comments.user_id` → `users.id` | `CASCADE` |
+| A post has many comments | One-to-many | `comments.post_id` → `posts.id` | `CASCADE` |
+| A user gives many likes | One-to-many | `likes.user_id` → `users.id` | `CASCADE` |
+| A post receives many likes | One-to-many | `likes.post_id` → `posts.id` | `CASCADE` |
+| A comment receives many likes | One-to-many | `likes.comment_id` → `comments.id` | `CASCADE` |
+| Users follow users | Many-to-many (self) | `followers.leader_id`, `followers.follower_id` → `users.id` | `CASCADE` |
+| Posts have hashtags | Many-to-many | `post_hashtags.post_id` → `posts.id`, `post_hashtags.hashtag_id` → `hashtags.id` | `CASCADE` |
+
+`CASCADE` everywhere keeps the data tidy: delete a user and everything they made goes with them (topic 35).
+
+### The rules (constraints)
+| Table | Rule | Tool |
+|---|---|---|
+| users | Username is unique | `UNIQUE` |
+| users | Has an email or a phone | `CHECK (email IS NOT NULL OR phone IS NOT NULL)` |
+| posts | Latitude is between -90 and 90 | `CHECK (lat BETWEEN -90 AND 90)` |
+| posts | Longitude is between -180 and 180 | `CHECK (lng BETWEEN -180 AND 180)` |
+| likes | A like has exactly one target | `CHECK (num_nonnulls(post_id, comment_id) = 1)` |
+| likes | A user can like a given post once | Partial unique index on `(user_id, post_id)` |
+| likes | A user can like a given comment once | Partial unique index on `(user_id, comment_id)` |
+| followers | You can't follow yourself | `CHECK (leader_id <> follower_id)` |
+| followers | You can follow someone once | `PRIMARY KEY (leader_id, follower_id)` |
+| hashtags | A tag exists once | `UNIQUE (title)` |
+
+### The build order
+Parents before children, so every foreign key has something to point at (topic 27):
+```
+1. users
+2. posts          (needs users)
+3. comments       (needs users, posts)
+4. likes          (needs users, posts, comments)
+5. followers      (needs users)
+6. hashtags
+7. post_hashtags  (needs posts, hashtags)
+```
+Drop them in the **reverse** order (topic 33).
+
+### The plan, in steps
+| Step | Action | Topic |
+|---|---|---|
+| 1 | Create a **new database** so nothing existing is overwritten | 109 |
+| 2 | Build `users`, `posts`, `comments`, `likes` with all their rules | 109 |
+| 3 | Test each rule with a row that should **fail** | 109 |
+| 4 | Build `followers`, `hashtags`, `post_hashtags` | next |
+| 5 | Load sample data and run joins and aggregations on it | next |
+
+> ⚠️ **Warning:** **A plan isn't final.** If a rule turns out to be wrong, change it now, while there's no data. Changing a constraint on a table full of rows takes extra work (topics 98 and 102).
+
+> ⚠️ **Warning:** This plan doesn't store passwords. If you use Auth.js, your users sign in through a provider, and the auth library manages its own tables. **Never store plain-text passwords** in any design.
+
+> ⚠️ **Warning:** `updated_at DEFAULT NOW()` only sets the value when a row is **inserted**. It doesn't change by itself on an `UPDATE`. Update it in your app, or use a trigger (a later topic).
+
+> 🏆 **Golden Rule:** **Tables, relationships, rules, build order.** If you can write all four on one page, you can build the database without surprises.
