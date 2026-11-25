@@ -656,3 +656,156 @@ Likes that point at a deleted post stay in the table forever. `ROLLBACK` put the
 > ⚠️ **Warning:** Some ORMs don't model polymorphic relations directly. **Prisma**, for example, has no built-in support at the time of writing, so check its docs before choosing this design for a Next.js app.
 
 > 🏆 **Golden Rule:** **A foreign key is the database's promise that a link is real.** A polymorphic association gives that promise up in exchange for flexibility. Do that only on purpose.
+
+
+
+
+## 🔀 115. Polymorphic Association Alternative Implementation
+
+**What it does:** Keeps **one likes table**, but replaces `liked_id` and `liked_type` with **one nullable foreign key per target** (`post_id`, `comment_id`) and a `CHECK` that **exactly one** of them is filled in.
+**Why it is used:** You get the single table of topic 114 **and** real foreign keys, so the database enforces that targets exist and cleans up on delete.
+**When to use it:** A small, fixed number of targets (two or three) where you want one table.
+**Note:** this is the design already built as `likes` in topic 109. This topic rebuilds it as `two_key_likes` so you can compare it with the others.
+
+**Analogy:** A form with two boxes, "post number" and "comment number," where the rule is **fill in exactly one**. Both boxes empty is invalid, and so are both full.
+
+### The table
+```sql
+DROP TABLE IF EXISTS two_key_likes;
+
+CREATE TABLE two_key_likes (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+  comment_id INTEGER REFERENCES comments(id) ON DELETE CASCADE,
+  CONSTRAINT exactly_one_target CHECK (num_nonnulls(post_id, comment_id) = 1)
+);
+
+CREATE UNIQUE INDEX two_key_likes_user_post_idx
+  ON two_key_likes (user_id, post_id) WHERE post_id IS NOT NULL;
+
+CREATE UNIQUE INDEX two_key_likes_user_comment_idx
+  ON two_key_likes (user_id, comment_id) WHERE comment_id IS NOT NULL;
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+```
+The two **partial unique indexes** are needed because a plain `UNIQUE (user_id, post_id, comment_id)` doesn't work: `NULL`s never compare equal, so duplicates slip through (topics 101 and 109).
+
+### Three ways to write "exactly one"
+| Check | Notes |
+|---|---|
+| `num_nonnulls(post_id, comment_id) = 1` | Shortest. PostgreSQL-specific |
+| `(post_id IS NOT NULL)::int + (comment_id IS NOT NULL)::int = 1` | Counts the filled columns. Scales to more columns |
+| `(post_id IS NULL) <> (comment_id IS NULL)` | A tidy "exactly one" for **two** columns only |
+
+### Add likes
+```sql
+INSERT INTO two_key_likes (user_id, post_id) VALUES (2, 1), (3, 1);
+INSERT INTO two_key_likes (user_id, comment_id) VALUES (4, 1), (2, 2);
+```
+**Output:**
+```
+INSERT 0 2
+INSERT 0 2
+```
+
+### Break the rules (these should fail)
+**Both targets:**
+```sql
+INSERT INTO two_key_likes (user_id, post_id, comment_id) VALUES (1, 1, 1);
+```
+**Output:**
+```
+ERROR:  new row for relation "two_key_likes" violates check constraint "exactly_one_target"
+```
+**No target:**
+```sql
+INSERT INTO two_key_likes (user_id) VALUES (1);
+```
+**Output:**
+```
+ERROR:  new row for relation "two_key_likes" violates check constraint "exactly_one_target"
+```
+**A post that doesn't exist:**
+```sql
+INSERT INTO two_key_likes (user_id, post_id) VALUES (1, 999);
+```
+**Output:**
+```
+ERROR:  insert or update on table "two_key_likes" violates foreign key constraint "two_key_likes_post_id_fkey"
+DETAIL:  Key (post_id)=(999) is not present in table "posts".
+```
+**A duplicate like:**
+```sql
+INSERT INTO two_key_likes (user_id, post_id) VALUES (2, 1);
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "two_key_likes_user_post_idx"
+DETAIL:  Key (user_id, post_id)=(2, 1) already exists.
+```
+
+### Query across both targets
+```sql
+SELECT 'post' AS kind, post_id AS id, COUNT(*) AS likes
+FROM two_key_likes
+WHERE post_id IS NOT NULL
+GROUP BY post_id
+UNION ALL
+SELECT 'comment', comment_id, COUNT(*)
+FROM two_key_likes
+WHERE comment_id IS NOT NULL
+GROUP BY comment_id
+ORDER BY kind, id;
+```
+**Output:**
+```
+  kind   | id | likes
+---------+----+-------
+ comment |  1 |     1
+ comment |  2 |     1
+ post    |  1 |     2
+(3 rows)
+```
+
+### The cleanup works
+```sql
+BEGIN;
+
+DELETE FROM posts WHERE id = 1;
+SELECT COUNT(*) AS remaining_likes FROM two_key_likes;
+
+ROLLBACK;
+```
+**Output:**
+```
+BEGIN
+DELETE 1
+ remaining_likes
+-----------------
+               0
+(1 row)
+```
+Deleting post 1 also deleted its two comments, and every like on the post **and** on those comments, all through foreign keys. Contrast that with the orphans in topic 114. `ROLLBACK` restores everything.
+
+### Scorecard
+| Requirement | Result |
+|---|---|
+| R1 and R2 both targets | ✅ |
+| R3 once only | ✅ (partial unique indexes) |
+| R7 real targets | ✅ **Enforced** |
+| R8 cleanup | ✅ **Enforced** |
+| Adding a third target | ⚠️ New column, new index, and the check changes |
+
+> ⚠️ **Warning:** Every new likeable thing means **altering the table**: another nullable column, another index, and an updated check. Past three or four targets, this gets clumsy.
+
+> ⚠️ **Warning:** Most of the cells in this table are `NULL`, which is why the check and the partial indexes are essential. Don't skip them.
+
+> ⚠️ **Warning:** `num_nonnulls` is PostgreSQL-specific. Use the `::int` version if you need portability.
+
+> 🏆 **Golden Rule:** **One table, one nullable foreign key per target, and a check that exactly one is set.** You keep the real references that polymorphic associations throw away.
