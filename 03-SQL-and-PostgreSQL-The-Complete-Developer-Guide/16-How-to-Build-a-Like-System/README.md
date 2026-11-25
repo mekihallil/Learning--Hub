@@ -809,3 +809,137 @@ Deleting post 1 also deleted its two comments, and every like on the post **and*
 > ⚠️ **Warning:** `num_nonnulls` is PostgreSQL-specific. Use the `::int` version if you need portability.
 
 > 🏆 **Golden Rule:** **One table, one nullable foreign key per target, and a check that exactly one is set.** You keep the real references that polymorphic associations throw away.
+
+
+
+
+## 🧱 116. The Simplest Alternative
+
+**What it does:** Uses **a separate likes table for each kind of target**: `post_likes` for posts and `comment_likes` for comments. No nullable columns and no checks.
+**Why it is used:** It's the **least clever** design, and that's its strength. Each table is the simple pattern from topic 112, with full foreign keys and a plain composite primary key.
+**When to use it:** A good default whenever you have a handful of targets, and you value simple rules over a single table.
+
+**Analogy:** **Two guest books**, one per event. There's no tricky rule about "which event is this line for," because each book only ever covers one event.
+
+### The tables
+```sql
+DROP TABLE IF EXISTS comment_likes;
+DROP TABLE IF EXISTS post_likes;
+
+CREATE TABLE post_likes (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, post_id)
+);
+
+CREATE TABLE comment_likes (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  comment_id INTEGER NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, comment_id)
+);
+```
+**Output:**
+```
+DROP TABLE
+DROP TABLE
+CREATE TABLE
+CREATE TABLE
+```
+
+### Add likes
+```sql
+INSERT INTO post_likes (user_id, post_id) VALUES (2, 1), (3, 1), (2, 2);
+INSERT INTO comment_likes (user_id, comment_id) VALUES (2, 2), (4, 1);
+```
+**Output:**
+```
+INSERT 0 3
+INSERT 0 2
+```
+
+### Every rule is a plain, ordinary constraint
+| Rule | How it's enforced |
+|---|---|
+| Real user and real target | `REFERENCES` (no nulls to worry about) |
+| Like once | The composite primary key |
+| Cleanup | `ON DELETE CASCADE` |
+| "Exactly one target" | **Not needed.** The table itself decides the target |
+
+**Likes per comment, with a plain join:**
+```sql
+SELECT c.id, c.contents, COUNT(cl.comment_id) AS likes
+FROM comments AS c
+LEFT JOIN comment_likes AS cl ON cl.comment_id = c.id
+GROUP BY c.id
+ORDER BY c.id;
+```
+**Output:**
+```
+ id |  contents  | likes
+----+------------+-------
+  1 | Nice shot! |     1
+  2 | Love this  |     1
+(2 rows)
+```
+
+### Querying across both is a union
+**Everything user 2 liked:**
+```sql
+SELECT 'post' AS kind, post_id AS id FROM post_likes WHERE user_id = 2
+UNION ALL
+SELECT 'comment', comment_id FROM comment_likes WHERE user_id = 2
+ORDER BY kind, id;
+```
+**Output:**
+```
+  kind   | id
+---------+----
+ comment |  2
+ post    |  1
+ post    |  2
+(3 rows)
+```
+**Total likes in the whole app:**
+```sql
+SELECT
+  (SELECT COUNT(*) FROM post_likes) + (SELECT COUNT(*) FROM comment_likes) AS total_likes;
+```
+**Output:**
+```
+ total_likes
+-------------
+           5
+(1 row)
+```
+
+### Scorecard
+| Requirement | Result |
+|---|---|
+| R1 and R2 both targets | ✅ (two tables) |
+| R3 once only | ✅ Primary key |
+| R7 real targets | ✅ Enforced |
+| R8 cleanup | ✅ Enforced |
+| Adding a third target | ✅ Add **one new table**, and no existing table changes |
+| Cross-target queries | ⚠️ Need `UNION ALL` |
+
+### Mapping to your Next.js app
+This design maps neatly to **Prisma**, because each table is a normal model with a composite id:
+```prisma
+model PostLike {
+  userId Int
+  postId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([userId, postId])
+}
+```
+Check the Prisma docs for your version, since the schema syntax and the generated client's field names can vary.
+
+> ⚠️ **Warning:** You repeat the same table pattern for each target, so changes (like adding `created_at`) must be made in each. Code generation or a migration helper can reduce that.
+
+> ⚠️ **Warning:** "Show every like in the system" is a `UNION ALL` over several tables, which grows as targets are added.
+
+> 🏆 **Golden Rule:** **When in doubt, use one table per relationship.** Plain foreign keys and plain primary keys beat clever constraints.
