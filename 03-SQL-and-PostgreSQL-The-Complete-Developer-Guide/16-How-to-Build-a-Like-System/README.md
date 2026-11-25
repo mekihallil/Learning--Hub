@@ -943,3 +943,93 @@ Check the Prisma docs for your version, since the schema syntax and the generate
 > ⚠️ **Warning:** "Show every like in the system" is a `UNION ALL` over several tables, which grows as targets are added.
 
 > 🏆 **Golden Rule:** **When in doubt, use one table per relationship.** Plain foreign keys and plain primary keys beat clever constraints.
+
+
+
+
+## 🧭 117. So Which Approach
+
+**What it does:** Compares every design from topics 111 to 116 side by side and gives you a **decision guide** for choosing one.
+**Why it is used:** There's no single winner. Each design trades data safety, simplicity, and flexibility differently, so the right answer depends on your app.
+**When to use it:** Whenever you add a feature that can attach to more than one kind of thing (likes, comments, tags, notifications, attachments).
+
+**Analogy:** Choosing a **vehicle**. A bicycle, a car, and a bus all travel, but the right one depends on distance, passengers, and budget.
+
+### The full comparison
+| Design | Real foreign keys | Uniqueness | Auto-cleanup | Adding a new target | Query simplicity |
+|---|---|---|---|---|---|
+| **Counter column** (111) | ❌ | ❌ | ❌ | n/a | Trivial, but loses data |
+| **Array of ids** (111) | ❌ | ❌ | ❌ | n/a | Poor |
+| **Loose table** (111) | ❌ | ❌ | ❌ | n/a | Easy, but unsafe |
+| **One target table** (112) | ✅ | ✅ | ✅ | n/a | ✅ Simple |
+| **Reactions** (113) | ✅ | ✅ | ✅ | n/a | ✅ Simple |
+| **Polymorphic** (114) | ❌ | ⚠️ with extra rules | ❌ | ✅ Easy | ⚠️ `UNION` |
+| **Two nullable keys** (115) | ✅ | ✅ (partial indexes) | ✅ | ⚠️ Alter the table | ⚠️ `UNION` |
+| **Separate tables** (116) | ✅ | ✅ | ✅ | ✅ One new table | ⚠️ `UNION` for cross queries |
+
+### A decision guide
+| Your situation | Choose |
+|---|---|
+| Only **one** kind of target, and always will be | **One table** (112) |
+| You want more than a thumbs-up | Add `reaction_type` (113) |
+| **2 to 4** targets, simplicity matters most | **Separate tables** (116) |
+| **2 to 3** targets, and you really want **one table** | **Two nullable keys** (115) |
+| Many targets, and the number keeps growing | Weigh **polymorphic** (114) against the lost safety, or add a shared parent table (an advanced pattern) |
+| A cheap "total likes" shown in a feed | Keep a real likes table, and add a counter as a cache (111) |
+
+### Questions to ask
+| Question | If **yes** |
+|---|---|
+| Must the database guarantee targets exist and get cleaned up? | Avoid polymorphic |
+| Will more kinds of target be added often? | Favor separate tables or polymorphic |
+| Will you query "everything this user liked" across all targets a lot? | A single table (115 or 114) makes that easier |
+| Does your ORM (Prisma) need to model it? | Favor separate tables (116), because polymorphic isn't modeled directly |
+| Do you only need the count, never the likers? | Still keep the likes table, plus a cached counter |
+
+### What the `social_app` notes keep
+- Topic 109 built the **two-nullable-keys** design (115), so the `likes` table stays as built.
+- If you were **starting over** with Prisma, **separate tables** (116) is the simpler choice, which is how I'd build it today.
+- Both are safe, because both keep real foreign keys.
+
+### Clean up the experiment tables
+Drop everything created in this section except the `likes` table from topic 109:
+```sql
+DROP TABLE IF EXISTS comment_likes, post_likes, post_reactions, poly_likes, two_key_likes;
+```
+**Output:**
+```
+DROP TABLE
+```
+(You'll see `NOTICE ... does not exist, skipping` for any you hadn't created.)
+
+**Check what's left:**
+```sql
+\dt
+```
+**Output:**
+```
+          List of relations
+ Schema |   Name   | Type  |  Owner
+--------+----------+-------+----------
+ public | comments | table | postgres
+ public | likes    | table | postgres
+ public | posts    | table | postgres
+ public | users    | table | postgres
+(4 rows)
+```
+
+### The same question, beyond likes
+The "one thing attaches to several kinds of things" problem shows up all over:
+
+| Feature | The same choice |
+|---|---|
+| Comments on posts **and** photos | Separate comment tables, or two nullable keys |
+| Tags on posts **and** users | A join table per target |
+| Notifications about many events | Polymorphic is common here, with an app-level cleanup |
+| File attachments on many models | Same trade-offs |
+
+> ⚠️ **Warning:** **There's no free lunch.** Flexibility (polymorphic) costs data safety, and safety (separate tables) costs a little repetition. Pick the cost you can live with.
+
+> ⚠️ **Warning:** Switching designs later means **migrating real data**. If you're unsure, start with the safest one (foreign keys everywhere), because it's much easier to relax a rule than to add one to messy data.
+
+> 🏆 **Golden Rule:** **Prefer designs where the database enforces the rules.** Choose separate tables for simplicity, two nullable keys for a single table, and polymorphic only when the number of targets is large and growing.
