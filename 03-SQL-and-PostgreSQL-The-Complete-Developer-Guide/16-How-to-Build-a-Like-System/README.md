@@ -97,3 +97,127 @@ INSERT 0 2
 > ⚠️ **Warning:** `TRUNCATE ... CASCADE` empties tables **without asking**. Run the reset script only in this practice database.
 
 > 🏆 **Golden Rule:** **Write the requirements as a numbered list, then grade every design against it.** A design that fails a requirement isn't "simple," it's incomplete.
+
+
+
+
+## 🚫 111. How Not to Design a Like System
+
+**What it does:** Shows the three designs that look obvious and **fail the requirements** from topic 110: a counter column, an array of user ids, and a loose likes table with no rules.
+**Why it is used:** Seeing *why* they fail teaches you what the good design must fix. All three have been shipped in real apps.
+**When to use it:** As a warning whenever a quick shortcut tempts you.
+
+**Analogy:** Counting votes by **adding tally marks to a blackboard.** You know the total, but not who voted, whether anyone voted twice, or whether the voters even exist.
+
+> These demos use `TEMP` tables, which disappear when your session ends, so nothing needs cleaning up.
+
+### Bad design 1: a counter column
+```sql
+CREATE TEMP TABLE counter_posts (
+  id SERIAL PRIMARY KEY,
+  url VARCHAR(200),
+  likes INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO counter_posts (url) VALUES ('http://one.jpg');
+
+UPDATE counter_posts SET likes = likes + 1 WHERE id = 1;
+UPDATE counter_posts SET likes = likes + 1 WHERE id = 1;
+
+SELECT * FROM counter_posts;
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 1
+UPDATE 1
+UPDATE 1
+ id |      url       | likes
+----+----------------+-------
+  1 | http://one.jpg |     2
+(1 row)
+```
+**What's wrong:**
+
+| Requirement | Result |
+|---|---|
+| R3 once only | ❌ The same person can add 1 forever |
+| R4 unlike | ❌ You can subtract, but you can't tell **whose** like to remove |
+| R5 who liked | ❌ Impossible, no one is recorded |
+| R7 real users | ❌ Nothing to check |
+
+### Bad design 2: an array of user ids on the post
+```sql
+CREATE TEMP TABLE array_posts (
+  id SERIAL PRIMARY KEY,
+  liked_by INTEGER[] NOT NULL DEFAULT '{}'
+);
+
+INSERT INTO array_posts DEFAULT VALUES;
+
+UPDATE array_posts SET liked_by = array_append(liked_by, 2);
+UPDATE array_posts SET liked_by = array_append(liked_by, 2);
+UPDATE array_posts SET liked_by = array_append(liked_by, 999);
+
+SELECT * FROM array_posts;
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 1
+UPDATE 1
+UPDATE 1
+UPDATE 1
+ id | liked_by
+----+----------
+  1 | {2,2,999}
+(1 row)
+```
+**What's wrong:**
+
+| Problem | Why |
+|---|---|
+| User 2 appears **twice** | An array has no uniqueness rule |
+| User **999** doesn't exist | An array element can't be a foreign key |
+| Deleting a user leaves the id behind | No `ON DELETE CASCADE` |
+| "What has user 2 liked?" | Must scan **every post's array** |
+| Each like rewrites the whole array | Slow and contention-prone for a popular post |
+
+### Bad design 3: a loose likes table
+This is on the right track (one row per like), but with **no rules**:
+```sql
+CREATE TEMP TABLE loose_likes (user_id INTEGER, post_id INTEGER);
+
+INSERT INTO loose_likes
+VALUES (2, 1), (2, 1), (999, 1), (NULL, NULL);
+
+SELECT COUNT(*) AS likes_for_post_1
+FROM loose_likes
+WHERE post_id = 1;
+```
+**Output:**
+```
+CREATE TABLE
+INSERT 0 4
+ likes_for_post_1
+------------------
+                3
+(1 row)
+```
+Post 1 shows **3 likes**, but one is a duplicate, one is from a user who doesn't exist, and there's a row that likes nothing at all.
+
+### Scorecard
+| Design | R3 once | R5 who | R7 real | R8 cleanup |
+|---|---|---|---|---|
+| Counter column | ❌ | ❌ | ❌ | n/a |
+| Array of ids | ❌ | ✅ | ❌ | ❌ |
+| Loose table | ❌ | ✅ | ❌ | ❌ |
+
+### A counter isn't always wrong
+A like **counter** can be a useful **cache** on top of a proper likes table (so a feed doesn't recount millions of rows). The mistake is making it the **only** record. If you add one later, keep it in sync with a trigger or in the same transaction.
+
+> ⚠️ **Warning:** **Every one of these "works" in a demo.** The bugs show up with real users, concurrent clicks, and deleted accounts.
+
+> ⚠️ **Warning:** A column that holds a **list** (comma-separated text, an array) usually means you need a **separate table** (topics 2 and 23).
+
+> 🏆 **Golden Rule:** **One like = one row, with real foreign keys and a uniqueness rule.** Anything else loses information the database could have protected.
