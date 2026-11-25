@@ -542,3 +542,117 @@ DELETE 1
 > ⚠️ **Warning:** If you also want comments to take reactions, you hit the same two-target problem as before (topics 114 to 116).
 
 > 🏆 **Golden Rule:** **A reaction system is a like system with one extra, validated column.** Choose the primary key based on whether a user may react more than once.
+
+
+
+
+## 🎭 114. Polymorphic Associations
+
+**What it does:** A **polymorphic association** lets one table point at **several different kinds of rows** by storing two columns: the **id** of the target and its **type** (`'posts'` or `'comments'`).
+**Why it is used:** It's the quickest answer to "a like can go on a post **or** a comment." One table, no extra tables, and adding a third target means just a new type string.
+**When to use it:** Understand it so you recognize it. Many frameworks (such as Rails and Django) have built-in support, but in plain SQL it **costs you data safety**, as shown below.
+
+**Analogy:** A **luggage tag** that says "item #1, type: bag." Nobody checks that item #1 is really a bag, or that it exists at all.
+
+### The table
+```sql
+DROP TABLE IF EXISTS poly_likes;
+
+CREATE TABLE poly_likes (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  liked_id INTEGER NOT NULL,
+  liked_type VARCHAR(20) NOT NULL
+);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+```
+Notice that `liked_id` has **no `REFERENCES`**. It can't have one, because one foreign key can only point at one table (topic 25).
+
+### What it accepts
+```sql
+INSERT INTO poly_likes (user_id, liked_id, liked_type)
+VALUES
+  (2, 1, 'posts'),       -- a real post
+  (3, 1, 'comments'),    -- a real comment
+  (4, 999, 'posts'),     -- a post that doesn't exist
+  (2, 1, 'banana');      -- a type that makes no sense
+```
+**Output:**
+```
+INSERT 0 4
+```
+**All four were accepted.** The database has no way to know that post 999 doesn't exist or that `'banana'` isn't a table.
+
+### Reading it back takes a union
+There's no single join, because the target lives in different tables:
+```sql
+SELECT pl.user_id, 'post' AS target, p.url AS detail
+FROM poly_likes AS pl
+JOIN posts AS p ON pl.liked_type = 'posts' AND p.id = pl.liked_id
+UNION ALL
+SELECT pl.user_id, 'comment', c.contents
+FROM poly_likes AS pl
+JOIN comments AS c ON pl.liked_type = 'comments' AND c.id = pl.liked_id
+ORDER BY user_id;
+```
+**Output:**
+```
+ user_id | target  |   detail
+---------+---------+----------------
+       2 | post    | http://one.jpg
+       3 | comment | Nice shot!
+(2 rows)
+```
+The two junk likes silently vanish from the result. The data is still there, just unreachable.
+
+### Deletes leave orphans behind
+```sql
+BEGIN;
+
+DELETE FROM posts WHERE id = 1;
+
+SELECT COUNT(*) AS orphaned_post_likes
+FROM poly_likes AS pl
+WHERE pl.liked_type = 'posts'
+  AND NOT EXISTS (SELECT 1 FROM posts AS p WHERE p.id = pl.liked_id);
+
+ROLLBACK;
+```
+**Output:**
+```
+BEGIN
+DELETE 1
+ orphaned_post_likes
+---------------------
+                   2
+(1 row)
+ROLLBACK
+```
+Likes that point at a deleted post stay in the table forever. `ROLLBACK` put the post back.
+
+### Scorecard
+| Requirement | Result |
+|---|---|
+| R1 and R2 both targets, one table | ✅ |
+| R5 who liked | ✅ |
+| R6 counting | ✅ (filter by type and id) |
+| R7 real targets | ❌ **Not enforced** |
+| R8 cleanup on delete | ❌ **Not enforced** |
+| Adding a third target | ✅ Easy |
+
+### What you can add to patch it up
+| Patch | Helps with | Still missing |
+|---|---|---|
+| `CHECK (liked_type IN ('posts', 'comments'))` | No `'banana'` | The id is still unchecked |
+| `UNIQUE (user_id, liked_type, liked_id)` | Duplicate likes | No existence check |
+| Triggers or app code to check and clean up | Existence and cleanup | You maintain it yourself |
+
+> ⚠️ **Warning:** **The database can't protect you here.** Every guarantee depends on every program that writes to the table being correct, forever.
+
+> ⚠️ **Warning:** Some ORMs don't model polymorphic relations directly. **Prisma**, for example, has no built-in support at the time of writing, so check its docs before choosing this design for a Next.js app.
+
+> 🏆 **Golden Rule:** **A foreign key is the database's promise that a link is real.** A polymorphic association gives that promise up in exchange for flexibility. Do that only on purpose.
