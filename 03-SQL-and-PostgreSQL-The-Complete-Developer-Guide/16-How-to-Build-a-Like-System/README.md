@@ -221,3 +221,182 @@ A like **counter** can be a useful **cache** on top of a proper likes table (so 
 > ⚠️ **Warning:** A column that holds a **list** (comma-separated text, an array) usually means you need a **separate table** (topics 2 and 23).
 
 > 🏆 **Golden Rule:** **One like = one row, with real foreign keys and a uniqueness rule.** Anything else loses information the database could have protected.
+
+
+
+
+## ✅ 112. Designing a Like System
+
+**What it does:** Builds the **correct** like table for posts: one row per like, a foreign key to the user and the post, and a **composite primary key** so nobody can like the same post twice.
+**Why it is used:** This one table satisfies almost every requirement from topic 110. The rest of the section is variations on it.
+**When to use it:** Whenever something can be "liked" and the target is a **single kind** of thing (here, posts).
+
+**Analogy:** A **guest book** where each line says "who" and "which event," and the book refuses a second line from the same person for the same event.
+
+### The table
+```sql
+DROP TABLE IF EXISTS post_likes;
+
+CREATE TABLE post_likes (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, post_id)
+);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+```
+(You may see a `NOTICE: table "post_likes" does not exist, skipping` on a first run.)
+
+| Piece | Requirement it satisfies |
+|---|---|
+| One row per like | R5 who liked, R6 counting |
+| `REFERENCES users(id)` and `REFERENCES posts(id)` | R7 real user, real post |
+| `ON DELETE CASCADE` | R8 cleanup |
+| `PRIMARY KEY (user_id, post_id)` | R3 once only (no separate id needed) |
+| `NOT NULL` | No half-empty likes |
+
+### Add some likes
+```sql
+INSERT INTO post_likes (user_id, post_id)
+VALUES (2, 1), (3, 1), (4, 1), (2, 2);
+```
+**Output:**
+```
+INSERT 0 4
+```
+
+### Break the rules (these should fail)
+**The same like twice (R3):**
+```sql
+INSERT INTO post_likes (user_id, post_id) VALUES (2, 1);
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "post_likes_pkey"
+DETAIL:  Key (user_id, post_id)=(2, 1) already exists.
+```
+**A user who doesn't exist (R7):**
+```sql
+INSERT INTO post_likes (user_id, post_id) VALUES (999, 1);
+```
+**Output:**
+```
+ERROR:  insert or update on table "post_likes" violates foreign key constraint "post_likes_user_id_fkey"
+DETAIL:  Key (user_id)=(999) is not present in table "users".
+```
+
+### Answer the questions from topic 110
+**Likes per post, including posts with none:**
+```sql
+SELECT p.id, p.caption, COUNT(l.post_id) AS likes
+FROM posts AS p
+LEFT JOIN post_likes AS l ON l.post_id = p.id
+GROUP BY p.id
+ORDER BY p.id;
+```
+**Output:**
+```
+ id | caption | likes
+----+---------+-------
+  1 | Sunrise |     3
+  2 | Lunch   |     1
+  3 | Sunset  |     0
+(3 rows)
+```
+`COUNT(l.post_id)` (not `COUNT(*)`) makes post 3 show `0` (topic 53).
+
+**Who liked post 1?**
+```sql
+SELECT u.username
+FROM post_likes AS l
+JOIN users AS u ON u.id = l.user_id
+WHERE l.post_id = 1
+ORDER BY u.username;
+```
+**Output:**
+```
+ username
+-----------
+ 99stroman
+ pferrer
+ si93onis
+(3 rows)
+```
+
+**Did user 2 like post 1?**
+```sql
+SELECT EXISTS (
+  SELECT 1 FROM post_likes WHERE user_id = 2 AND post_id = 1
+) AS liked;
+```
+**Output:**
+```
+ liked
+-------
+ t
+(1 row)
+```
+
+### Unlike, and a "safe" like
+**Unlike (R4):**
+```sql
+DELETE FROM post_likes WHERE user_id = 2 AND post_id = 2;
+```
+**Output:**
+```
+DELETE 1
+```
+**Like without an error if it already exists:**
+```sql
+INSERT INTO post_likes (user_id, post_id) VALUES (2, 2) ON CONFLICT DO NOTHING;
+INSERT INTO post_likes (user_id, post_id) VALUES (2, 2) ON CONFLICT DO NOTHING;
+```
+**Output:**
+```
+INSERT 0 1
+INSERT 0 0
+```
+The first inserted the like. The second did nothing and raised no error, which makes a "like" button safe to click twice.
+
+**What has user 2 liked?**
+```sql
+SELECT p.caption
+FROM post_likes AS l
+JOIN posts AS p ON p.id = l.post_id
+WHERE l.user_id = 2
+ORDER BY p.id;
+```
+**Output:**
+```
+ caption
+---------
+ Sunrise
+ Lunch
+(2 rows)
+```
+
+### Speed: add an index for the other direction
+The primary key `(user_id, post_id)` makes lookups **by user** fast. "Count the likes of a post" searches by `post_id`, which needs its own index (topic 101):
+```sql
+CREATE INDEX post_likes_post_id_idx ON post_likes (post_id);
+```
+**Output:**
+```
+CREATE INDEX
+```
+
+### Primary key choices
+| Choice | When |
+|---|---|
+| `PRIMARY KEY (user_id, post_id)` (used here) | Nothing else needs to reference a single like |
+| `id SERIAL PRIMARY KEY` plus `UNIQUE (user_id, post_id)` | Other tables must point at an individual like |
+
+> ⚠️ **Warning:** Without the second index, counting likes on one post in a huge table scans too much. Add `post_id` indexes before it's slow.
+
+> ⚠️ **Warning:** This table likes **posts only**. Comments need another design (topics 114 to 116).
+
+> 🏆 **Golden Rule:** **One row per like, two foreign keys, and a composite primary key.** That single pattern gives you uniqueness, real references, and cleanup for free.
