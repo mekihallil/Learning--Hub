@@ -400,3 +400,145 @@ CREATE INDEX
 > ⚠️ **Warning:** This table likes **posts only**. Comments need another design (topics 114 to 116).
 
 > 🏆 **Golden Rule:** **One row per like, two foreign keys, and a composite primary key.** That single pattern gives you uniqueness, real references, and cleanup for free.
+
+
+
+
+## 😍 113. Making a Reaction System Instead
+
+**What it does:** Extends the like table with a **`reaction_type`** column, so users can respond with `like`, `love`, `haha`, `sad`, or `angry` instead of only a plain like.
+**Why it is used:** A like is just one reaction. Adding a column handles the whole family, and "like" becomes one allowed value.
+**When to use it:** When your app wants more than a thumbs-up (requirement R9 from topic 110).
+
+**Analogy:** Upgrading a **single light switch** to a **dial with five settings**. You still have one control per person, but each can be set to a different value.
+
+### The table
+```sql
+DROP TABLE IF EXISTS post_reactions;
+
+CREATE TABLE post_reactions (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  reaction_type VARCHAR(10) NOT NULL
+    CHECK (reaction_type IN ('like', 'love', 'haha', 'sad', 'angry')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, post_id)
+);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+```
+It's the same table as topic 112, plus one `CHECK`ed column (topic 102). The primary key stays `(user_id, post_id)`, so each person has **one** reaction per post.
+
+### Add reactions
+```sql
+INSERT INTO post_reactions (user_id, post_id, reaction_type)
+VALUES (2, 1, 'like'), (3, 1, 'love'), (4, 1, 'like'), (2, 2, 'haha');
+```
+**Output:**
+```
+INSERT 0 4
+```
+**An invalid reaction is rejected:**
+```sql
+INSERT INTO post_reactions (user_id, post_id, reaction_type) VALUES (1, 2, 'meh');
+```
+**Output:**
+```
+ERROR:  new row for relation "post_reactions" violates check constraint "post_reactions_reaction_type_check"
+```
+(A `DETAIL:` line with the failing row follows.)
+
+### Count by reaction type
+```sql
+SELECT post_id, reaction_type, COUNT(*) AS total
+FROM post_reactions
+GROUP BY post_id, reaction_type
+ORDER BY post_id, reaction_type;
+```
+**Output:**
+```
+ post_id | reaction_type | total
+---------+---------------+-------
+       1 | like          |     2
+       1 | love          |     1
+       2 | haha          |     1
+(3 rows)
+```
+
+### One row per post, with the counts side by side
+```sql
+SELECT
+  post_id,
+  COUNT(*) FILTER (WHERE reaction_type = 'like') AS likes,
+  COUNT(*) FILTER (WHERE reaction_type = 'love') AS loves,
+  COUNT(*) AS total
+FROM post_reactions
+GROUP BY post_id
+ORDER BY post_id;
+```
+**Output:**
+```
+ post_id | likes | loves | total
+---------+-------+-------+-------
+       1 |     2 |     1 |     3
+       2 |     0 |     0 |     1
+(2 rows)
+```
+`FILTER` is the PostgreSQL shortcut for a conditional count (topic 84).
+
+### Change a reaction (an "upsert")
+User 2 changes from `like` to `love` on post 1:
+```sql
+INSERT INTO post_reactions (user_id, post_id, reaction_type)
+VALUES (2, 1, 'love')
+ON CONFLICT (user_id, post_id)
+DO UPDATE SET reaction_type = EXCLUDED.reaction_type;
+```
+**Output:**
+```
+INSERT 0 1
+```
+```sql
+SELECT user_id, reaction_type FROM post_reactions WHERE post_id = 1 ORDER BY user_id;
+```
+**Output:**
+```
+ user_id | reaction_type
+---------+---------------
+       2 | love
+       3 | love
+       4 | like
+(3 rows)
+```
+`EXCLUDED` means "the row I tried to insert." If the pair already exists, the reaction is **updated** instead of failing.
+
+**Remove a reaction:**
+```sql
+DELETE FROM post_reactions WHERE user_id = 2 AND post_id = 1;
+```
+**Output:**
+```
+DELETE 1
+```
+
+### Two ways to model "which reactions can a user give?"
+| Primary key | Behavior | Like |
+|---|---|---|
+| `(user_id, post_id)` (used here) | **One** reaction per user per post. Changing it is an `UPDATE` | Facebook-style |
+| `(user_id, post_id, reaction_type)` | A user can give **several different** reactions to one post | Slack-style emoji |
+
+### Three ways to restrict the allowed values
+| Approach | Pros | Cons |
+|---|---|---|
+| `CHECK (... IN (...))` (used here) | Simple, no extra object | Changing the list means altering the constraint |
+| A **lookup table** plus a foreign key | Add a reaction with a plain `INSERT` | One more table to join |
+| An `ENUM` type | Compact, self-documenting | Adding is easy, **removing** a value is awkward |
+
+> ⚠️ **Warning:** With `PRIMARY KEY (user_id, post_id)`, a second reaction from the same user **fails** unless you use `ON CONFLICT ... DO UPDATE`.
+
+> ⚠️ **Warning:** If you also want comments to take reactions, you hit the same two-target problem as before (topics 114 to 116).
+
+> 🏆 **Golden Rule:** **A reaction system is a like system with one extra, validated column.** Choose the primary key based on whether a user may react more than once.
