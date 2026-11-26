@@ -146,3 +146,96 @@ FROM posts;
 > ⚠️ **Warning:** A box search is only an approximation. For real "within 5 km" searches, use PostgreSQL's **PostGIS** extension.
 
 > 🏆 **Golden Rule:** **Optional facts are nullable columns, and a `CHECK` keeps them sensible.**
+
+
+
+
+## 🏷️ 120. Photo Mentions vs Caption Mentions
+
+**What it does:** Separates two ways a user can be linked to a post. A **photo tag** puts a user **on the picture** at an (x, y) position. A **caption mention** names a user in the **text** with `@username`.
+**Why it is used:** They look alike, but they carry different data. Only a photo tag has a position.
+**When to use it:** Whenever your app lets people tag friends in a photo or mention them in a caption.
+
+**Analogy:** A photo tag is **pointing at someone in the picture**. A caption mention is **saying their name out loud**.
+
+### Two tables
+```sql
+CREATE TABLE photo_tags (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  x INTEGER NOT NULL CHECK (x >= 0),
+  y INTEGER NOT NULL CHECK (y >= 0),
+  UNIQUE (post_id, user_id)
+);
+
+CREATE TABLE caption_tags (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE (post_id, user_id)
+);
+```
+**Output:**
+```
+CREATE TABLE
+CREATE TABLE
+```
+
+### Add some tags to post 1
+```sql
+INSERT INTO photo_tags (post_id, user_id, x, y)
+VALUES (1, 2, 120, 80), (1, 3, 300, 150);
+
+INSERT INTO caption_tags (post_id, user_id)
+VALUES (1, 2), (1, 4);
+```
+**Output:**
+```
+INSERT 0 2
+INSERT 0 2
+```
+```sql
+SELECT u.username, t.x, t.y
+FROM photo_tags AS t
+JOIN users AS u ON u.id = t.user_id
+WHERE t.post_id = 1
+ORDER BY u.username;
+```
+**Output:**
+```
+ username | x   | y
+----------+-----+-----
+ pferrer  | 120 |  80
+ si93onis | 300 | 150
+(2 rows)
+```
+
+### Caption mentions come from the text
+Your app (or SQL) finds the `@names` in the caption:
+```sql
+SELECT regexp_matches('Great day with @pferrer and @si93onis', '@(\w+)', 'g');
+```
+**Output:**
+```
+ regexp_matches
+----------------
+ {pferrer}
+ {si93onis}
+(2 rows)
+```
+Each match is then looked up in `users` and saved as a `caption_tags` row.
+
+### The difference
+| | Photo tag | Caption mention |
+|---|---|---|
+| **Where** | On the image | In the caption text |
+| **Position** | `x`, `y` required | None |
+| **Created by** | The user taps the photo | Parsing `@name` in the text |
+| **Table** | `photo_tags` | `caption_tags` |
+
+> ⚠️ **Warning:** Caption mention rows can **drift out of sync** with the text if the caption is edited. Re-parse and update them whenever the caption changes.
+
+> 🏆 **Golden Rule:** **Same link (user to post), different data.** The position is what makes a photo tag special.
