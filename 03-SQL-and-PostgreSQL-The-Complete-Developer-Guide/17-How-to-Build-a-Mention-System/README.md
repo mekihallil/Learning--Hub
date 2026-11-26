@@ -51,3 +51,98 @@ Caption and location are already there from topic 109.
 > ⚠️ **Warning:** Don't store a list in one column (like `'pferrer,si93onis'`). You can't search it, count it, or protect it with a foreign key.
 
 > 🏆 **Golden Rule:** **One per post is a column. Many per post is a table.**
+
+
+
+
+
+## 📍 119. Adding Captions and Locations
+
+**What it does:** Adds a **caption** and a **location** (latitude and longitude) to `posts`, with a `CHECK` that keeps the coordinates on the globe.
+**Why it is used:** Almost every photo app shows a caption and a place. Both are optional, so they allow `NULL`.
+**When to use it:** Whenever a post can carry a description or a map pin.
+
+**Analogy:** The **label and map pin** on a photo print. Some prints have both, some have neither.
+
+### Add the columns
+These already exist from topic 109, so this is safe to run again:
+```sql
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS caption VARCHAR(240);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
+```
+**Output:**
+```
+NOTICE:  column "caption" of relation "posts" already exists, skipping
+ALTER TABLE
+NOTICE:  column "lat" of relation "posts" already exists, skipping
+ALTER TABLE
+NOTICE:  column "lng" of relation "posts" already exists, skipping
+ALTER TABLE
+```
+On a table without them, the columns would be added, and existing rows would get `NULL`.
+
+### Give two posts a location
+```sql
+UPDATE posts SET lat = 35.68, lng = 139.69 WHERE id = 1;
+UPDATE posts SET lat = 48.86, lng = 2.35 WHERE id = 2;
+
+SELECT id, caption, lat, lng FROM posts ORDER BY id;
+```
+**Output:**
+```
+UPDATE 1
+UPDATE 1
+ id | caption |  lat  |  lng
+----+---------+-------+--------
+  1 | Sunrise | 35.68 | 139.69
+  2 | Lunch   | 48.86 |   2.35
+  3 | Sunset  |       |
+(3 rows)
+```
+
+### The check rejects impossible coordinates
+```sql
+UPDATE posts SET lat = 95 WHERE id = 1;
+```
+**Output:**
+```
+ERROR:  new row for relation "posts" violates check constraint "posts_lat_range"
+```
+(A `DETAIL:` line follows.) A `NULL` coordinate passes the check, which is what we want for posts with no location (topic 102).
+
+### Query by location
+**Posts inside a rough box:**
+```sql
+SELECT id, caption
+FROM posts
+WHERE lat BETWEEN 30 AND 40
+  AND lng BETWEEN 130 AND 150;
+```
+**Output:**
+```
+ id | caption
+----+---------
+  1 | Sunrise
+(1 row)
+```
+**How many posts have a location?**
+```sql
+SELECT
+  COUNT(*) AS total,
+  COUNT(*) FILTER (WHERE lat IS NOT NULL) AS with_location
+FROM posts;
+```
+**Output:**
+```
+ total | with_location
+-------+---------------
+     3 |             2
+(1 row)
+```
+
+> ⚠️ **Warning:** Store **both** coordinates or **neither**. If a post could have `lat` without `lng`, add `CHECK ((lat IS NULL) = (lng IS NULL))`.
+
+> ⚠️ **Warning:** A box search is only an approximation. For real "within 5 km" searches, use PostgreSQL's **PostGIS** extension.
+
+> 🏆 **Golden Rule:** **Optional facts are nullable columns, and a `CHECK` keeps them sensible.**
