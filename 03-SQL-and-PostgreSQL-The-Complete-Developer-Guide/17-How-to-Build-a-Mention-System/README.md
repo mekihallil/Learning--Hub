@@ -238,4 +238,55 @@ Each match is then looked up in `users` and saved as a `caption_tags` row.
 
 > ⚠️ **Warning:** Caption mention rows can **drift out of sync** with the text if the caption is edited. Re-parse and update them whenever the caption changes.
 
-> 🏆 **Golden Rule:** **Same link (user to post), different data.** The position is what makes a photo tag special.
+
+
+
+
+## ⚖️ 121. Considerations on Photo Tags vs Caption Tags
+
+**What it does:** Weighs the **two-table** design from topic 120 against a **single table**, so you can see which one causes fewer problems.
+**Why it is used:** Two near-identical tables mean doubled code and awkward questions like "which posts is this user in, in any way?"
+**When to use it:** Whenever two tables look almost the same.
+
+**Analogy:** Two **guest lists** for the same party, one for people on the stage and one for people in the crowd. To count everyone, you have to merge both, and watch for anyone on both.
+
+### The problem, with real data
+```sql
+SELECT post_id, user_id FROM photo_tags
+UNION ALL
+SELECT post_id, user_id FROM caption_tags
+ORDER BY post_id, user_id;
+```
+**Output:**
+```
+ post_id | user_id
+---------+---------
+       1 |       2
+       1 |       2
+       1 |       3
+       1 |       4
+(4 rows)
+```
+`pferrer` (user 2) appears **twice**, because they're both in the photo and in the caption. Plain `UNION` would collapse that (topic 62), but you must remember to use it every time.
+
+### Three possible designs
+| Design | How | Trade-off |
+|---|---|---|
+| **A. Two tables** (topic 120) | `photo_tags` and `caption_tags` | Clear, but every query needs a `UNION` |
+| **B. One table plus `tag_type`** | A `'photo'` or `'caption'` column | One table, but `x`, `y` must be nullable and need a check |
+| **C. One table, position optional** | `x`, `y` are `NULL` for caption mentions | The simplest, and no type column needed |
+
+### Questions to ask
+| Question | Answer |
+|---|---|
+| Is a user ever **both** photo-tagged and caption-mentioned on one post? | Yes, so decide whether that's one tag or two |
+| Do you often ask "all posts this user appears in"? | Favors **one table** |
+| Do the two kinds need different rules? | Only the position does |
+| Will you add more kinds later (such as video tags)? | A single table adapts more easily |
+
+### Verdict
+The two tables share the same **link** (post and user), and differ only by the **optional position**. That points to design **C**, which is built in topic 122.
+
+> ⚠️ **Warning:** Design C means a user can appear **once per post**, as a photo tag **or** a mention. If you need both at once, add a type column and include it in the unique rule.
+
+> 🏆 **Golden Rule:** **If two tables differ only by an optional column, merge them.** Make that column nullable, and protect it with a `CHECK`.
