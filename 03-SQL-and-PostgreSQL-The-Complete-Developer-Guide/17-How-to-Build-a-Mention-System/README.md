@@ -290,3 +290,118 @@ The two tables share the same **link** (post and user), and differ only by the *
 > ⚠️ **Warning:** Design C means a user can appear **once per post**, as a photo tag **or** a mention. If you need both at once, add a type column and include it in the unique rule.
 
 > 🏆 **Golden Rule:** **If two tables differ only by an optional column, merge them.** Make that column nullable, and protect it with a `CHECK`.
+
+
+
+
+## 🔄 122. Update For Tags
+
+**What it does:** **Replaces** the two tag tables from topic 120 with **one `tags` table**. A tag has a position (`x`, `y`) if it's on the photo, and no position if it's a caption mention.
+**Why it is used:** One table means one set of queries, no `UNION`, and no double counting.
+**When to use it:** This is the final tag design for the `social_app` schema. It updates the plan from topic 108.
+
+**Analogy:** One **guest list** where each guest either has a **seat number** (photo tag) or no seat (caption mention).
+
+### Replace the old tables
+```sql
+DROP TABLE IF EXISTS photo_tags, caption_tags;
+
+CREATE TABLE tags (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  x INTEGER,
+  y INTEGER,
+  CONSTRAINT tags_position_both_or_neither CHECK ((x IS NULL) = (y IS NULL)),
+  CONSTRAINT tags_position_not_negative CHECK (x >= 0 AND y >= 0),
+  UNIQUE (post_id, user_id)
+);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+```
+| Rule | Tool |
+|---|---|
+| Both coordinates or neither | `CHECK ((x IS NULL) = (y IS NULL))` |
+| No negative position | `CHECK (x >= 0 AND y >= 0)` (`NULL` passes) |
+| One tag per user per post | `UNIQUE (post_id, user_id)` |
+| Cleanup | `ON DELETE CASCADE` |
+
+### Add tags
+```sql
+INSERT INTO tags (post_id, user_id, x, y)
+VALUES
+  (1, 2, 120, 80),
+  (1, 3, 300, 150),
+  (1, 4, NULL, NULL);
+```
+**Output:**
+```
+INSERT 0 3
+```
+User 4 is a caption mention, so it has no position.
+
+### Break the rules
+**A half position:**
+```sql
+INSERT INTO tags (post_id, user_id, x, y) VALUES (1, 1, 50, NULL);
+```
+**Output:**
+```
+ERROR:  new row for relation "tags" violates check constraint "tags_position_both_or_neither"
+```
+**The same user twice on one post:**
+```sql
+INSERT INTO tags (post_id, user_id) VALUES (1, 2);
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "tags_post_id_user_id_key"
+DETAIL:  Key (post_id, user_id)=(1, 2) already exists.
+```
+
+### Query it
+**Everyone tagged in post 1, and how:**
+```sql
+SELECT
+  u.username,
+  CASE WHEN t.x IS NULL THEN 'caption' ELSE 'photo' END AS tag_type,
+  t.x, t.y
+FROM tags AS t
+JOIN users AS u ON u.id = t.user_id
+WHERE t.post_id = 1
+ORDER BY u.username;
+```
+**Output:**
+```
+ username  | tag_type |  x  |  y
+-----------+----------+-----+-----
+ 99stroman | caption  |     |
+ pferrer   | photo    | 120 |  80
+ si93onis  | photo    | 300 | 150
+(3 rows)
+```
+**Count each kind:**
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE x IS NOT NULL) AS photo_tags,
+  COUNT(*) FILTER (WHERE x IS NULL) AS caption_tags
+FROM tags
+WHERE post_id = 1;
+```
+**Output:**
+```
+ photo_tags | caption_tags
+------------+--------------
+          2 |            1
+(1 row)
+```
+
+> ⚠️ **Warning:** `DROP TABLE` deletes the old tag data. In a real database, copy it into `tags` first (`INSERT INTO tags SELECT ...`), then drop the old tables.
+
+> ⚠️ **Warning:** If a user can be **both** photo-tagged and mentioned on the same post, change the unique rule to `UNIQUE (post_id, user_id, x, y)` with `NULLS NOT DISTINCT` (PostgreSQL 15+), or add a type column.
+
+> 🏆 **Golden Rule:** **Merge tables that differ by one optional column.** Make it nullable, add a `CHECK`, and the design gets simpler without losing any safety.
