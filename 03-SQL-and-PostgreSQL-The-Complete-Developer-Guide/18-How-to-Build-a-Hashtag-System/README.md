@@ -412,3 +412,140 @@ SELECT username FROM users WHERE NOT is_private AND status = 'active' ORDER BY i
 > ⚠️ **Warning:** `last_login_at` is not set automatically. Your sign-in code must update it.
 
 > 🏆 **Golden Rule:** **A single fact about a user is a column.** Make it `NOT NULL DEFAULT ...` when "unknown" has no meaning, and nullable when it does.
+
+
+
+
+## 🔢 127. Why No Number of Followers or Posts
+
+**What it does:** Explains why `users` has **no** `follower_count` or `post_count` column. Those numbers can be **calculated** from the real rows whenever you need them.
+**Why it is used:** A stored count is a **second copy** of the truth. Two copies eventually disagree.
+**When to use it:** Any time you're tempted to store a number that is just a count of other rows.
+
+**Analogy:** A **sign on a shop door** saying "42 customers today." The moment someone walks out and nobody changes the sign, it's wrong. Counting heads when asked is always right.
+
+### First, the followers table
+It's the last table of the plan in topic 108:
+```sql
+CREATE TABLE followers (
+  leader_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (leader_id, follower_id),
+  CONSTRAINT followers_not_self CHECK (leader_id <> follower_id)
+);
+
+CREATE INDEX followers_follower_id_idx ON followers (follower_id);
+
+INSERT INTO followers (leader_id, follower_id)
+VALUES (1, 2), (1, 3), (1, 4), (2, 1);
+```
+**Output:**
+```
+CREATE TABLE
+CREATE INDEX
+INSERT 0 4
+```
+A row means "`follower_id` follows `leader_id`."
+
+### Calculate the numbers when needed
+```sql
+SELECT
+  u.username,
+  (SELECT COUNT(*) FROM posts AS p WHERE p.user_id = u.id) AS posts,
+  (SELECT COUNT(*) FROM followers AS f WHERE f.leader_id = u.id) AS followers,
+  (SELECT COUNT(*) FROM followers AS f WHERE f.follower_id = u.id) AS following
+FROM users AS u
+ORDER BY u.id;
+```
+**Output:**
+```
+ username  | posts | followers | following
+-----------+-------+-----------+-----------
+ monahan93 |     2 |         3 |         1
+ pferrer   |     1 |         1 |         1
+ si93onis  |     0 |         0 |         1
+ 99stroman |     0 |         0 |         1
+(4 rows)
+```
+These are correct **by construction**, because they come straight from the rows.
+
+### What goes wrong with a stored counter
+```sql
+BEGIN;
+
+ALTER TABLE users ADD COLUMN num_posts INTEGER NOT NULL DEFAULT 0;
+UPDATE users SET num_posts = (SELECT COUNT(*) FROM posts WHERE posts.user_id = users.id);
+
+INSERT INTO posts (url, user_id) VALUES ('http://four.jpg', 1);
+
+SELECT
+  username,
+  num_posts AS stored,
+  (SELECT COUNT(*) FROM posts WHERE posts.user_id = users.id) AS real
+FROM users
+WHERE id = 1;
+
+ROLLBACK;
+```
+**Output:**
+```
+BEGIN
+ALTER TABLE
+UPDATE 4
+INSERT 0 1
+ username  | stored | real
+-----------+--------+------
+ monahan93 |      2 |    3
+(1 row)
+```
+The new post was inserted, but nobody updated `num_posts`, so the stored number is **stale**. `ROLLBACK` undid the column and the test post.
+
+### Why a stored count drifts
+| Event | Counter update needed |
+|---|---|
+| A post is created | +1 |
+| A post is deleted | -1 |
+| A user is deleted (cascade) | Update every related counter |
+| Two requests at once | Both read, both add 1, one update is lost |
+| A bug or a manual fix in `psql` | Nobody updates it |
+
+### Counting is cheap with the right index
+| Count | Index that makes it fast |
+|---|---|
+| Posts per user | `posts (user_id)` |
+| Followers of a user | The primary key `(leader_id, follower_id)` |
+| Accounts a user follows | `followers (follower_id)` (created above) |
+
+```sql
+CREATE INDEX posts_user_id_idx ON posts (user_id);
+```
+**Output:**
+```
+CREATE INDEX
+```
+
+### In your Next.js app
+Prisma can count related rows in the same query, with no stored column. Check the docs for your version:
+```tsx
+const users = await db.user.findMany({
+  select: {
+    username: true,
+    _count: { select: { posts: true } },
+  },
+});
+```
+
+### When a stored count is acceptable
+| Situation | Approach |
+|---|---|
+| Millions of followers, and the count is shown constantly | A **cached** counter, kept correct by a trigger or one transaction with the insert |
+| A dashboard total | A materialized view, refreshed on a schedule |
+
+Even then, the **real rows stay the source of truth**, so the counter can always be rebuilt (topic 111).
+
+> ⚠️ **Warning:** Start with `COUNT(*)` and an index. Add a cache only after you've **measured** a real problem.
+
+> ⚠️ **Warning:** The `CHECK` blocks following yourself, but not someone you already follow twice, because the composite primary key does that.
+
+> 🏆 **Golden Rule:** **Don't store what you can calculate.** The rows are the truth, and a count is just a question you can ask them.
