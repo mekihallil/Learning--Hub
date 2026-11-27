@@ -168,3 +168,149 @@ INSERT 0 1
 > ⚠️ **Warning:** This table is only for comparison. You'll drop it in topic 125.
 
 > 🏆 **Golden Rule:** **If the same text is repeated across many rows, it probably deserves its own table.**
+
+
+
+
+## ✅ 125. Including the Hashtag Table
+
+**What it does:** Splits the design in two: a **`hashtags`** table that holds each tag **once**, and a **`post_hashtags`** join table that links posts to tags by id. It's the many-to-many pattern from topic 23.
+**Why it is used:** Tags become real objects. They're unique, validated, renameable in one place, and cheap to count.
+**When to use it:** The default for any hashtag, label, or category system.
+
+**Analogy:** A **master list of tags** at the front desk, and each post only holds a ticket number pointing at an entry.
+
+### The tables
+```sql
+DROP TABLE IF EXISTS simple_hashtags;
+
+CREATE TABLE hashtags (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  title VARCHAR(30) NOT NULL UNIQUE,
+  CONSTRAINT hashtags_title_format CHECK (title ~ '^[a-z0-9_]+$')
+);
+
+CREATE TABLE post_hashtags (
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  hashtag_id INTEGER NOT NULL REFERENCES hashtags(id) ON DELETE CASCADE,
+  PRIMARY KEY (post_id, hashtag_id)
+);
+
+CREATE INDEX post_hashtags_hashtag_id_idx ON post_hashtags (hashtag_id);
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE INDEX
+```
+| Rule | Tool |
+|---|---|
+| A tag exists once | `UNIQUE` on `title` |
+| Only lowercase letters, digits, underscore | `CHECK` with a pattern |
+| Same tag once per post | Composite primary key |
+| Fast "posts for this tag" | Index on `hashtag_id` |
+| Cleanup | `ON DELETE CASCADE` on both sides |
+
+### Fill them
+```sql
+INSERT INTO hashtags (title) VALUES ('sunrise'), ('travel'), ('food'), ('sunrise2');
+
+INSERT INTO post_hashtags (post_id, hashtag_id)
+VALUES (1, 1), (1, 2), (2, 3), (3, 4), (3, 2);
+```
+**Output:**
+```
+INSERT 0 4
+INSERT 0 5
+```
+
+### Break the rules
+**Wrong case:**
+```sql
+INSERT INTO hashtags (title) VALUES ('Travel');
+```
+**Output:**
+```
+ERROR:  new row for relation "hashtags" violates check constraint "hashtags_title_format"
+```
+**A duplicate tag:**
+```sql
+INSERT INTO hashtags (title) VALUES ('travel');
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "hashtags_title_key"
+DETAIL:  Key (title)=(travel) already exists.
+```
+
+### Find or create a tag in one statement
+```sql
+INSERT INTO hashtags (title) VALUES ('travel')
+ON CONFLICT (title) DO UPDATE SET title = EXCLUDED.title
+RETURNING id;
+```
+**Output:**
+```
+ id
+----
+  2
+
+INSERT 0 1
+```
+It returns the existing id, or creates the tag and returns the new one. (`DO NOTHING` would return no row on a conflict.)
+
+### Query it
+**Most used hashtags:**
+```sql
+SELECT h.title, COUNT(*) AS posts
+FROM hashtags AS h
+JOIN post_hashtags AS ph ON ph.hashtag_id = h.id
+GROUP BY h.id
+ORDER BY posts DESC, h.title;
+```
+**Output:**
+```
+  title   | posts
+----------+-------
+ travel   |     2
+ food     |     1
+ sunrise  |     1
+ sunrise2 |     1
+(4 rows)
+```
+**Rename a tag in one row:**
+```sql
+BEGIN;
+UPDATE hashtags SET title = 'journey' WHERE title = 'travel';
+SELECT p.id, h.title FROM post_hashtags ph
+JOIN hashtags h ON h.id = ph.hashtag_id
+JOIN posts p ON p.id = ph.post_id
+WHERE h.id = 2 ORDER BY p.id;
+ROLLBACK;
+```
+**Output:**
+```
+BEGIN
+UPDATE 1
+ id |  title
+----+---------
+  1 | journey
+  3 | journey
+(2 rows)
+```
+One `UPDATE` changed it everywhere. `ROLLBACK` undid the test.
+
+### Compared with topic 124
+| | One table (124) | Two tables (125) |
+|---|---|---|
+| Unique tags | ❌ | ✅ |
+| Rename a tag | Update many rows | **One row** |
+| Tag facts | Nowhere to put them | Add columns to `hashtags` |
+| Extra table to join | No | Yes |
+
+> ⚠️ **Warning:** Always `lower()` and validate a tag in your app **before** inserting. The `CHECK` is the safety net, not the first line of defense.
+
+> 🏆 **Golden Rule:** **Store each repeated thing once, and link to it by id.** A join table with a composite primary key handles the many-to-many.
