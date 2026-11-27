@@ -314,3 +314,101 @@ One `UPDATE` changed it everywhere. `ROLLBACK` undid the test.
 > ⚠️ **Warning:** Always `lower()` and validate a tag in your app **before** inserting. The `CHECK` is the safety net, not the first line of defense.
 
 > 🏆 **Golden Rule:** **Store each repeated thing once, and link to it by id.** A join table with a composite primary key handles the many-to-many.
+
+
+
+
+## 👤 126. A Few More User Columns
+
+**What it does:** Adds four useful columns to `users`: a **display name**, a **privacy flag**, an account **status**, and a **last login** time.
+**Why it is used:** These are small, single-value facts about a user, so they belong in **columns** (topic 118), not in new tables.
+**When to use it:** When a profile needs more than a username.
+
+**Analogy:** Adding **extra fields to a membership card**: preferred name, "private account," active or suspended, and last visit.
+
+### Add the columns
+```sql
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS display_name VARCHAR(50),
+  ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS status VARCHAR(15) NOT NULL DEFAULT 'active',
+  ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+
+ALTER TABLE users
+  ADD CONSTRAINT users_status_allowed
+  CHECK (status IN ('active', 'suspended', 'deleted'));
+```
+**Output:**
+```
+ALTER TABLE
+ALTER TABLE
+```
+(Running the second statement twice fails with `constraint "users_status_allowed" already exists`.)
+
+| Column | Type | Why this shape |
+|---|---|---|
+| `display_name` | `VARCHAR(50)`, optional | Not everyone sets one |
+| `is_private` | `BOOLEAN NOT NULL DEFAULT false` | A real flag, never `NULL` (topic 92) |
+| `status` | `VARCHAR(15)` with a `CHECK` | A fixed list of values (topic 102) |
+| `last_login_at` | `TIMESTAMPTZ`, optional | A moment in time. `NULL` means never logged in |
+
+Adding a `NOT NULL` column works on existing rows because of the `DEFAULT` (topic 98).
+
+### Check the result
+```sql
+SELECT id, username, is_private, status FROM users ORDER BY id;
+```
+**Output:**
+```
+ id | username  | is_private | status
+----+-----------+------------+--------
+  1 | monahan93 | f          | active
+  2 | pferrer   | f          | active
+  3 | si93onis  | f          | active
+  4 | 99stroman | f          | active
+(4 rows)
+```
+
+### Use them
+**Record a login:**
+```sql
+UPDATE users SET last_login_at = NOW() WHERE id = 1;
+```
+**Output:**
+```
+UPDATE 1
+```
+**An invalid status is rejected:**
+```sql
+UPDATE users SET status = 'banned' WHERE id = 4;
+```
+**Output:**
+```
+ERROR:  new row for relation "users" violates check constraint "users_status_allowed"
+```
+**Public accounts that are active:**
+```sql
+SELECT username FROM users WHERE NOT is_private AND status = 'active' ORDER BY id;
+```
+**Output:**
+```
+ username
+-----------
+ monahan93
+ pferrer
+ si93onis
+ 99stroman
+(4 rows)
+```
+
+### Deliberately left out
+| Column | Why |
+|---|---|
+| `password` | With Auth.js and OAuth (topics 40 to 47), the provider handles sign-in. If you ever store passwords, store a **hash** and **never** plain text |
+| `follower_count`, `post_count` | Derived data. See topic 127 |
+
+> ⚠️ **Warning:** Keep `status` values in one place. If the list grows or changes often, a lookup table with a foreign key is easier to maintain than a `CHECK` (topic 113).
+
+> ⚠️ **Warning:** `last_login_at` is not set automatically. Your sign-in code must update it.
+
+> 🏆 **Golden Rule:** **A single fact about a user is a column.** Make it `NOT NULL DEFAULT ...` when "unknown" has no meaning, and nullable when it does.
