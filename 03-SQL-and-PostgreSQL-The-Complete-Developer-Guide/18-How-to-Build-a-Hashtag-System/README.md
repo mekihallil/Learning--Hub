@@ -72,3 +72,99 @@ ORDER BY id, tag;
 > ⚠️ **Warning:** The regular expression `#(\w+)` is a simple example. Real hashtag rules (accents, emoji, length limits) need more care.
 
 > 🏆 **Golden Rule:** **Parse the text once when it's saved, and store the tags as rows.** Never search free text for structured data.
+
+
+## 🗂️ 124. Tables for Hashtags
+
+**What it does:** Builds the **simplest** hashtag design: one table that stores each (post, hashtag title) pair directly. It works, but it shows exactly where the trouble starts.
+**Why it is used:** Seeing the weakness first makes the better design in topic 125 easy to appreciate.
+**When to use it:** Only for tiny apps or prototypes.
+
+**Analogy:** Writing the tag **name** on every sticky note, instead of pointing to one master list.
+
+### The table
+```sql
+DROP TABLE IF EXISTS simple_hashtags;
+
+CREATE TABLE simple_hashtags (
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  title VARCHAR(30) NOT NULL,
+  PRIMARY KEY (post_id, title)
+);
+
+INSERT INTO simple_hashtags (post_id, title)
+VALUES (1, 'sunrise'), (1, 'travel'), (2, 'food'), (3, 'sunrise2'), (3, 'travel');
+```
+**Output:**
+```
+DROP TABLE
+CREATE TABLE
+INSERT 0 5
+```
+The composite primary key stops the same tag appearing twice on one post.
+
+### It answers the basic questions
+**Posts with `#travel`:**
+```sql
+SELECT p.id, p.caption
+FROM simple_hashtags AS h
+JOIN posts AS p ON p.id = h.post_id
+WHERE h.title = 'travel'
+ORDER BY p.id;
+```
+**Output:**
+```
+ id |          caption
+----+---------------------------
+  1 | Sunrise #sunrise #travel
+  3 | Sunset #sunrise2 #travel
+(2 rows)
+```
+**Most used hashtags:**
+```sql
+SELECT title, COUNT(*) AS posts
+FROM simple_hashtags
+GROUP BY title
+ORDER BY posts DESC, title;
+```
+**Output:**
+```
+  title   | posts
+----------+-------
+ travel   |     2
+ food     |     1
+ sunrise  |     1
+ sunrise2 |     1
+(4 rows)
+```
+
+### Where it breaks
+**Case and typos slip in** (H3 from topic 123):
+```sql
+BEGIN;
+INSERT INTO simple_hashtags (post_id, title) VALUES (2, 'Travel');
+SELECT title, COUNT(*) FROM simple_hashtags WHERE LOWER(title) = 'travel' GROUP BY title ORDER BY title;
+ROLLBACK;
+```
+**Output:**
+```
+BEGIN
+INSERT 0 1
+ title  | count
+--------+-------
+ Travel |     1
+ travel |     2
+(2 rows)
+```
+`Travel` and `travel` are now **two tags**. `ROLLBACK` removed the test row.
+
+| Problem | Why |
+|---|---|
+| Case and typos create duplicate tags | Nothing defines what a valid tag is |
+| Renaming a tag means updating **every** row | The text is copied onto each post |
+| No place for tag facts (created date, banned, follower count) | A tag isn't an object, only text |
+| Repeated text wastes space | `'travel'` is stored again for every post |
+
+> ⚠️ **Warning:** This table is only for comparison. You'll drop it in topic 125.
+
+> 🏆 **Golden Rule:** **If the same text is repeated across many rows, it probably deserves its own table.**
