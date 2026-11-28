@@ -388,3 +388,113 @@ ORDER BY p.id;
 > ⚠️ **Warning:** If you add a third likeable thing, you must alter the table, add an index, and update the check. Past three or four targets, separate tables are simpler (topic 116).
 
 > 🏆 **Golden Rule:** **Nullable foreign keys need a `CHECK` for "exactly one" and partial unique indexes for "only once."** Skip either and the table silently allows bad data.
+
+
+
+
+## 🏷️ 133. Photo Tags and Caption Tags
+
+**What it does:** Builds the **single `tags` table** from topic 122. A tag with an `(x, y)` position is a **photo tag**, and a tag with no position is a **caption mention**.
+**Why it is used:** Both kinds link a user to a post, and only the optional position differs. One table means no `UNION` and no double counting (topic 121).
+**When to use it:** After `users` and `posts` exist.
+
+**Analogy:** One guest list where some guests have a **seat number** (photo tag) and others are simply **named in the invitation** (caption mention).
+
+### The table
+```sql
+CREATE TABLE tags (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  x INTEGER,
+  y INTEGER,
+  CONSTRAINT tags_position_both_or_neither CHECK ((x IS NULL) = (y IS NULL)),
+  CONSTRAINT tags_position_not_negative CHECK (x >= 0 AND y >= 0),
+  UNIQUE (post_id, user_id)
+);
+
+CREATE INDEX tags_user_id_idx ON tags (user_id);
+```
+**Output:**
+```
+CREATE TABLE
+CREATE INDEX
+```
+The `UNIQUE (post_id, user_id)` index already covers lookups by post. The extra index covers "every post this user is tagged in."
+
+### Valid rows
+```sql
+INSERT INTO tags (post_id, user_id, x, y)
+VALUES (1, 2, 120, 80), (1, 3, 300, 150), (1, 4, NULL, NULL);
+```
+**Output:**
+```
+INSERT 0 3
+```
+Users 2 and 3 are **photo tags**. User 4 is a **caption mention**.
+
+### Break the rules
+**Half a position:**
+```sql
+INSERT INTO tags (post_id, user_id, x, y) VALUES (2, 1, 50, NULL);
+```
+**Output:**
+```
+ERROR:  new row for relation "tags" violates check constraint "tags_position_both_or_neither"
+```
+**The same user tagged twice on one post:**
+```sql
+INSERT INTO tags (post_id, user_id) VALUES (1, 2);
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "tags_post_id_user_id_key"
+DETAIL:  Key (post_id, user_id)=(1, 2) already exists.
+```
+
+### Use it: the two "tables" are just filters
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE x IS NOT NULL) AS photo_tags,
+  COUNT(*) FILTER (WHERE x IS NULL) AS caption_tags
+FROM tags
+WHERE post_id = 1;
+```
+**Output:**
+```
+ photo_tags | caption_tags
+------------+--------------
+          2 |            1
+(1 row)
+```
+**Who is tagged in post 1, and how?**
+```sql
+SELECT u.username, CASE WHEN t.x IS NULL THEN 'caption' ELSE 'photo' END AS tag_type
+FROM tags AS t
+JOIN users AS u ON u.id = t.user_id
+WHERE t.post_id = 1
+ORDER BY u.username;
+```
+**Output:**
+```
+ username  | tag_type
+-----------+----------
+ 99stroman | caption
+ pferrer   | photo
+ si93onis  | photo
+(3 rows)
+```
+
+### One table or two?
+| | One `tags` table (built here) | Two tables (topic 120) |
+|---|---|---|
+| Queries | No `UNION` | `UNION` to combine |
+| Same user as photo tag **and** mention | Not allowed by the unique rule | Allowed |
+| Rules for the position | One `CHECK` | A `NOT NULL` on the photo table |
+
+> ⚠️ **Warning:** With one table, a user is tagged **once per post**. If you need both a photo tag and a mention for the same person, build the two-table version from topic 120 instead.
+
+> ⚠️ **Warning:** Caption mention rows can drift out of sync if the caption is edited. Re-parse the `@names` whenever the caption changes (topic 120).
+
+> 🏆 **Golden Rule:** **Merge tables that differ only by an optional column.** Add a `CHECK` so the optional part is either complete or absent.
