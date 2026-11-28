@@ -196,3 +196,88 @@ DETAIL:  Key (user_id)=(999) is not present in table "users".
 > ⚠️ **Warning:** `ON DELETE CASCADE` means deleting a user deletes their posts. That's intended here, but confirm it matches how your app should behave.
 
 > 🏆 **Golden Rule:** **Required columns are `NOT NULL`, optional ones are nullable with checks, and every foreign key gets an index.**
+
+
+
+## 💬 131. Comments Creation
+
+**What it does:** Builds `comments`: text that can't be blank, plus two foreign keys, one to the **author** and one to the **post**.
+**Why it is used:** A comment belongs to exactly one user and one post (two one-to-many relationships, topic 22). Both links are required and cascade.
+**When to use it:** After `users` and `posts` exist.
+
+**Analogy:** A **sticky note on a photo**: it must have words, it must say who wrote it, and it must be stuck on a real photo.
+
+### The table
+```sql
+CREATE TABLE comments (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  contents VARCHAR(240) NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  CONSTRAINT comments_contents_not_blank CHECK (LENGTH(TRIM(contents)) > 0)
+);
+
+CREATE INDEX comments_post_id_idx ON comments (post_id);
+CREATE INDEX comments_user_id_idx ON comments (user_id);
+```
+**Output:**
+```
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+```
+The `NOT NULL` alone would accept `'   '`. The `TRIM` check closes that gap (topics 98 and 102).
+
+### Valid rows
+```sql
+INSERT INTO comments (contents, user_id, post_id)
+VALUES ('Nice shot!', 2, 1), ('Love this', 3, 1);
+```
+**Output:**
+```
+INSERT 0 2
+```
+
+### Break the rules
+**A blank comment:**
+```sql
+INSERT INTO comments (contents, user_id, post_id) VALUES ('   ', 2, 1);
+```
+**Output:**
+```
+ERROR:  new row for relation "comments" violates check constraint "comments_contents_not_blank"
+```
+**A post that doesn't exist:**
+```sql
+INSERT INTO comments (contents, user_id, post_id) VALUES ('Hello', 2, 999);
+```
+**Output:**
+```
+ERROR:  insert or update on table "comments" violates foreign key constraint "comments_post_id_fkey"
+DETAIL:  Key (post_id)=(999) is not present in table "posts".
+```
+
+### Use it: comments with their authors
+```sql
+SELECT c.id, u.username, c.contents
+FROM comments AS c
+JOIN users AS u ON u.id = c.user_id
+WHERE c.post_id = 1
+ORDER BY c.id;
+```
+**Output:**
+```
+ id | username |  contents
+----+----------+------------
+  1 | pferrer  | Nice shot!
+  2 | si93onis | Love this
+(2 rows)
+```
+
+> ⚠️ **Warning:** The 240-character limit is enforced by `VARCHAR(240)`. Make sure your app's validation (Zod) uses the **same** number, so users see a friendly message first.
+
+> ⚠️ **Warning:** This table has no `parent_id`, so comments **can't be replies to other comments**. Nested threads need the self-reference from the Next.js comment topics.
+
+> 🏆 **Golden Rule:** **A child table needs a foreign key to every parent it belongs to, and an index on each.** Block blank text with a `CHECK`, because `NOT NULL` won't.
