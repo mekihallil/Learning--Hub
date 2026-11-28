@@ -498,3 +498,181 @@ ORDER BY u.username;
 > ⚠️ **Warning:** Caption mention rows can drift out of sync if the caption is edited. Re-parse the `@names` whenever the caption changes (topic 120).
 
 > 🏆 **Golden Rule:** **Merge tables that differ only by an optional column.** Add a `CHECK` so the optional part is either complete or absent.
+
+
+
+
+## 🔗 134. Creating Hashtags, Hashtag Posts, and Followers
+
+**What it does:** Finishes the schema with the last three tables: **`hashtags`** (each tag once), **`post_hashtags`** (the join table), and **`followers`** (users following users). Then it verifies **all eight tables** together.
+**Why it is used:** All three are many-to-many designs (topics 123 to 128), so they come last, after the tables they point at exist.
+**When to use it:** The final step of the build.
+
+**Analogy:** The **master tag list**, the **tickets that connect tags to posts**, and the **mailing list** of who subscribes to whom, added once everything they refer to is in place.
+
+### The three tables
+```sql
+CREATE TABLE hashtags (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  title VARCHAR(30) NOT NULL UNIQUE,
+  CONSTRAINT hashtags_title_format CHECK (title ~ '^[a-z0-9_]+$')
+);
+
+CREATE TABLE post_hashtags (
+  post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  hashtag_id INTEGER NOT NULL REFERENCES hashtags(id) ON DELETE CASCADE,
+  PRIMARY KEY (post_id, hashtag_id)
+);
+
+CREATE INDEX post_hashtags_hashtag_id_idx ON post_hashtags (hashtag_id);
+
+CREATE TABLE followers (
+  leader_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (leader_id, follower_id),
+  CONSTRAINT followers_not_self CHECK (leader_id <> follower_id)
+);
+
+CREATE INDEX followers_follower_id_idx ON followers (follower_id);
+```
+**Output:**
+```
+CREATE TABLE
+CREATE TABLE
+CREATE INDEX
+CREATE TABLE
+CREATE INDEX
+```
+
+### Valid rows
+```sql
+INSERT INTO hashtags (title) VALUES ('sunrise'), ('travel'), ('food'), ('sunrise2');
+
+INSERT INTO post_hashtags (post_id, hashtag_id)
+VALUES (1, 1), (1, 2), (2, 3), (3, 4), (3, 2);
+
+INSERT INTO followers (leader_id, follower_id)
+VALUES (1, 2), (1, 3), (1, 4), (2, 1);
+```
+**Output:**
+```
+INSERT 0 4
+INSERT 0 5
+INSERT 0 4
+```
+
+### Break the rules
+**An uppercase hashtag:**
+```sql
+INSERT INTO hashtags (title) VALUES ('Travel');
+```
+**Output:**
+```
+ERROR:  new row for relation "hashtags" violates check constraint "hashtags_title_format"
+```
+**Following yourself:**
+```sql
+INSERT INTO followers (leader_id, follower_id) VALUES (1, 1);
+```
+**Output:**
+```
+ERROR:  new row for relation "followers" violates check constraint "followers_not_self"
+```
+**Following the same person twice:**
+```sql
+INSERT INTO followers (leader_id, follower_id) VALUES (1, 2);
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "followers_pkey"
+DETAIL:  Key (leader_id, follower_id)=(1, 2) already exists.
+```
+
+### Verify the whole schema
+```sql
+\dt
+```
+**Output:**
+```
+             List of relations
+ Schema |     Name      | Type  |  Owner
+--------+---------------+-------+----------
+ public | comments      | table | postgres
+ public | followers     | table | postgres
+ public | hashtags      | table | postgres
+ public | likes         | table | postgres
+ public | post_hashtags | table | postgres
+ public | posts         | table | postgres
+ public | tags          | table | postgres
+ public | users         | table | postgres
+(8 rows)
+```
+**Row counts after the sample data:**
+```sql
+SELECT
+  (SELECT COUNT(*) FROM users) AS users,
+  (SELECT COUNT(*) FROM posts) AS posts,
+  (SELECT COUNT(*) FROM comments) AS comments,
+  (SELECT COUNT(*) FROM likes) AS likes,
+  (SELECT COUNT(*) FROM tags) AS tags,
+  (SELECT COUNT(*) FROM hashtags) AS hashtags,
+  (SELECT COUNT(*) FROM post_hashtags) AS post_hashtags,
+  (SELECT COUNT(*) FROM followers) AS followers;
+```
+**Output:**
+```
+ users | posts | comments | likes | tags | hashtags | post_hashtags | followers
+-------+-------+----------+-------+------+----------+---------------+-----------
+     4 |     3 |        2 |     4 |    3 |        4 |             5 |         4
+(1 row)
+```
+
+### The final cascade test
+Delete one user inside a transaction and watch everything connected to them disappear:
+```sql
+BEGIN;
+
+DELETE FROM users WHERE id = 1;
+
+SELECT
+  (SELECT COUNT(*) FROM users) AS users,
+  (SELECT COUNT(*) FROM posts) AS posts,
+  (SELECT COUNT(*) FROM comments) AS comments,
+  (SELECT COUNT(*) FROM likes) AS likes,
+  (SELECT COUNT(*) FROM tags) AS tags,
+  (SELECT COUNT(*) FROM hashtags) AS hashtags,
+  (SELECT COUNT(*) FROM post_hashtags) AS post_hashtags,
+  (SELECT COUNT(*) FROM followers) AS followers;
+
+ROLLBACK;
+```
+**Output:**
+```
+BEGIN
+DELETE 1
+ users | posts | comments | likes | tags | hashtags | post_hashtags | followers
+-------+-------+----------+-------+------+----------+---------------+-----------
+     3 |     1 |        0 |     0 |    0 |        4 |             1 |         0
+(1 row)
+```
+User 1 owned posts 1 and 3, so their comments, likes, tags, and hashtag links went with them. All their follow rows disappeared too. The hashtags themselves stay, because they don't belong to one user. `ROLLBACK` undid the whole test.
+
+### The finished schema
+| Table | Points at | Key rules |
+|---|---|---|
+| `users` | nothing | unique username, contact `CHECK`, status list |
+| `posts` | `users` | required URL, valid location |
+| `comments` | `users`, `posts` | non-blank text |
+| `likes` | `users`, `posts`, `comments` | exactly one target, once per user |
+| `tags` | `users`, `posts` | position complete or absent, once per user |
+| `hashtags` | nothing | unique, lowercase format |
+| `post_hashtags` | `posts`, `hashtags` | composite primary key |
+| `followers` | `users` (twice) | not yourself, once per pair |
+
+> ⚠️ **Warning:** **Create order matters.** `hashtags` before `post_hashtags`, and `users` before `followers`. Running a child's `CREATE TABLE` first fails with `relation "..." does not exist`.
+
+> ⚠️ **Warning:** Save the whole script as `schema.sql` in Git. Rebuilding a database from one file is the safest way to recover from mistakes (topic 107).
+
+> 🏆 **Golden Rule:** **Test the schema by trying to break it.** If every bad row is refused and the cascade test removes exactly what you expect, the design works.
