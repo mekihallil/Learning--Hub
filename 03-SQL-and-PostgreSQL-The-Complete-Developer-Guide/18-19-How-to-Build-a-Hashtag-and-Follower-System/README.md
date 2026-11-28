@@ -549,3 +549,238 @@ Even then, the **real rows stay the source of truth**, so the counter can always
 > ⚠️ **Warning:** The `CHECK` blocks following yourself, but not someone you already follow twice, because the composite primary key does that.
 
 > 🏆 **Golden Rule:** **Don't store what you can calculate.** The rows are the truth, and a count is just a question you can ask them.
+
+
+
+
+## 👥 128. Designing a Follower System
+
+**What it does:** Designs "user follows user" with **one join table** whose two foreign keys both point at `users`. It's a many-to-many relationship (topic 23) from a table **back to itself**.
+**Why it is used:** Following is **directional**. You can follow someone who doesn't follow you, so each row must say who follows whom.
+**When to use it:** Any social feature where one kind of thing relates to the same kind of thing: followers, friends, blocked users, referrals.
+
+**Analogy:** A **mailing list** where each line reads "Sam subscribes to Alex." Subscribing doesn't mean Alex subscribes to Sam.
+
+### Requirements
+| # | Requirement | Tool |
+|---|---|---|
+| F1 | A user follows **many** users, and has **many** followers | Many-to-many join table |
+| F2 | Following is **one-way** | Two differently named columns |
+| F3 | You can follow someone **only once** | Composite primary key |
+| F4 | You **can't follow yourself** | `CHECK` |
+| F5 | Both users must be **real** | Foreign keys |
+| F6 | Deleting a user removes their follow links | `ON DELETE CASCADE` |
+| F7 | We can list followers, list "following," and count both | Joins and `COUNT` |
+
+### The table
+```sql
+CREATE TABLE IF NOT EXISTS followers (
+  leader_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (leader_id, follower_id),
+  CONSTRAINT followers_not_self CHECK (leader_id <> follower_id)
+);
+
+CREATE INDEX IF NOT EXISTS followers_follower_id_idx ON followers (follower_id);
+
+INSERT INTO followers (leader_id, follower_id)
+VALUES (1, 2), (1, 3), (1, 4), (2, 1)
+ON CONFLICT DO NOTHING;
+```
+**Output:**
+```
+CREATE TABLE
+CREATE INDEX
+INSERT 0 4
+```
+(On a repeat run you'll see `NOTICE ... already exists, skipping` and `INSERT 0 0`.)
+
+**Read each row as:** "`follower_id` follows `leader_id`."
+
+| leader_id | follower_id | Meaning |
+|---|---|---|
+| 1 | 2 | pferrer follows monahan93 |
+| 1 | 3 | si93onis follows monahan93 |
+| 1 | 4 | 99stroman follows monahan93 |
+| 2 | 1 | monahan93 follows pferrer |
+
+### The questions
+**Who follows `monahan93`?** Match on `leader_id`, show the `follower_id` user:
+```sql
+SELECT u.username
+FROM followers AS f
+JOIN users AS u ON u.id = f.follower_id
+WHERE f.leader_id = 1
+ORDER BY u.username;
+```
+**Output:**
+```
+ username
+-----------
+ 99stroman
+ pferrer
+ si93onis
+(3 rows)
+```
+**Who does `pferrer` follow?** Match on `follower_id`, show the `leader_id` user:
+```sql
+SELECT u.username
+FROM followers AS f
+JOIN users AS u ON u.id = f.leader_id
+WHERE f.follower_id = 2;
+```
+**Output:**
+```
+ username
+-----------
+ monahan93
+(1 row)
+```
+**Does `si93onis` follow `monahan93`?**
+```sql
+SELECT EXISTS (
+  SELECT 1 FROM followers WHERE leader_id = 1 AND follower_id = 3
+) AS follows;
+```
+**Output:**
+```
+ follows
+---------
+ t
+(1 row)
+```
+**Who follows each other (mutual follows)?** Join the table to itself with the columns swapped:
+```sql
+SELECT ua.username AS user_a, ub.username AS user_b
+FROM followers AS a
+JOIN followers AS b ON b.leader_id = a.follower_id AND b.follower_id = a.leader_id
+JOIN users AS ua ON ua.id = a.leader_id
+JOIN users AS ub ON ub.id = a.follower_id
+WHERE a.leader_id < a.follower_id;
+```
+**Output:**
+```
+  user_a   | user_b
+-----------+---------
+ monahan93 | pferrer
+(1 row)
+```
+`a.leader_id < a.follower_id` keeps each pair **once** instead of twice.
+
+**Followers per user, including users with none:**
+```sql
+SELECT u.username, COUNT(f.follower_id) AS followers
+FROM users AS u
+LEFT JOIN followers AS f ON f.leader_id = u.id
+GROUP BY u.id
+ORDER BY followers DESC, u.username;
+```
+**Output:**
+```
+ username  | followers
+-----------+-----------
+ monahan93 |         3
+ pferrer   |         1
+ 99stroman |         0
+ si93onis  |         0
+(4 rows)
+```
+`COUNT(f.follower_id)` gives the zeros (topic 53). Counts are calculated, never stored (topic 127).
+
+### Follow and unfollow
+**Follow safely (clicking twice does no harm):**
+```sql
+INSERT INTO followers (leader_id, follower_id) VALUES (3, 4) ON CONFLICT DO NOTHING;
+```
+**Output:**
+```
+INSERT 0 1
+```
+**Unfollow:**
+```sql
+DELETE FROM followers WHERE leader_id = 3 AND follower_id = 4;
+```
+**Output:**
+```
+DELETE 1
+```
+
+### Break the rules
+**Follow yourself:**
+```sql
+INSERT INTO followers (leader_id, follower_id) VALUES (1, 1);
+```
+**Output:**
+```
+ERROR:  new row for relation "followers" violates check constraint "followers_not_self"
+```
+**Follow twice:**
+```sql
+INSERT INTO followers (leader_id, follower_id) VALUES (1, 2);
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "followers_pkey"
+DETAIL:  Key (leader_id, follower_id)=(1, 2) already exists.
+```
+**Follow a user who doesn't exist:**
+```sql
+INSERT INTO followers (leader_id, follower_id) VALUES (999, 1);
+```
+**Output:**
+```
+ERROR:  insert or update on table "followers" violates foreign key constraint "followers_leader_id_fkey"
+DETAIL:  Key (leader_id)=(999) is not present in table "users".
+```
+
+### Cleanup on delete
+```sql
+BEGIN;
+
+DELETE FROM users WHERE id = 4;
+SELECT COUNT(*) AS remaining_follows FROM followers;
+
+ROLLBACK;
+```
+**Output:**
+```
+BEGIN
+DELETE 1
+ remaining_follows
+-------------------
+                 3
+(1 row)
+```
+Deleting user 4 removed the follow row `(1, 4)`. `ROLLBACK` brought the user back.
+
+### Why the two indexes?
+| Search | Index that helps |
+|---|---|
+| "Followers of user X" (`leader_id = X`) | The **primary key** `(leader_id, follower_id)` |
+| "Who does user X follow" (`follower_id = X`) | `followers_follower_id_idx` |
+
+### Optional: private accounts
+`users.is_private` (topic 126) suggests **follow requests**. One way is a `status` column on `followers` (`'pending'` or `'accepted'`) with a `CHECK`. This isn't applied here. If you add it, count and list only the `'accepted'` rows.
+
+### In Prisma
+A table that points at the same model twice needs **named relations**. Check the docs for your version:
+```prisma
+model Follow {
+  leaderId   Int
+  followerId Int
+  leader     User @relation("Leaders", fields: [leaderId], references: [id], onDelete: Cascade)
+  follower   User @relation("Followers", fields: [followerId], references: [id], onDelete: Cascade)
+
+  @@id([leaderId, followerId])
+}
+```
+Prisma's schema can't express the `CHECK (leader_id <> follower_id)`, so add it in a custom SQL migration (topic 104).
+
+> ⚠️ **Warning:** **The two column names are easy to mix up.** Always read a row as "follower follows leader," and test queries on a small, known set of rows.
+
+> ⚠️ **Warning:** The `<>` check stops `(1, 1)`, but it can't stop **blocked** users from following. That needs a separate rule or table.
+
+> ⚠️ **Warning:** `followers_follower_id_idx` costs a little on every insert, but saves a lot on "who do I follow" lookups. Keep it.
+
+> 🏆 **Golden Rule:** **One join table with two foreign keys to the same table, a composite primary key, and a "not yourself" check.** Name the columns by role (`leader_id`, `follower_id`), never `user1` and `user2`.
