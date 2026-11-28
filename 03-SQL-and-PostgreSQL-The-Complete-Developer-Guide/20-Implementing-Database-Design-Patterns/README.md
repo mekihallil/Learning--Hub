@@ -281,3 +281,110 @@ ORDER BY c.id;
 > ⚠️ **Warning:** This table has no `parent_id`, so comments **can't be replies to other comments**. Nested threads need the self-reference from the Next.js comment topics.
 
 > 🏆 **Golden Rule:** **A child table needs a foreign key to every parent it belongs to, and an index on each.** Block blank text with a `CHECK`, because `NOT NULL` won't.
+
+
+
+
+## ❤️ 132. Likes Creation
+
+**What it does:** Builds `likes` with **two nullable foreign keys** (`post_id`, `comment_id`), a `CHECK` that **exactly one** is filled, and **partial unique indexes** so nobody likes the same thing twice.
+**Why it is used:** One table covers likes on posts **and** comments, with real foreign keys and automatic cleanup (design from topics 109 and 115).
+**When to use it:** After `posts` and `comments` exist.
+
+**Analogy:** A **ballot with two boxes** (post or comment) where the rule is "tick **exactly one**," and each voter may tick a given item only once.
+
+### The table
+```sql
+CREATE TABLE likes (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+  comment_id INTEGER REFERENCES comments(id) ON DELETE CASCADE,
+  CONSTRAINT likes_exactly_one_target CHECK (num_nonnulls(post_id, comment_id) = 1)
+);
+
+CREATE UNIQUE INDEX likes_user_post_idx
+  ON likes (user_id, post_id) WHERE post_id IS NOT NULL;
+CREATE UNIQUE INDEX likes_user_comment_idx
+  ON likes (user_id, comment_id) WHERE comment_id IS NOT NULL;
+
+CREATE INDEX likes_post_id_idx ON likes (post_id);
+CREATE INDEX likes_comment_id_idx ON likes (comment_id);
+```
+**Output:**
+```
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+```
+| Piece | Why |
+|---|---|
+| `num_nonnulls(...) = 1` | Exactly one target |
+| Two **partial unique** indexes | A plain `UNIQUE (user_id, post_id, comment_id)` fails because `NULL`s never match (topic 101) |
+| The last two indexes | Fast "how many likes does this post or comment have" |
+
+### Valid rows
+```sql
+INSERT INTO likes (user_id, post_id) VALUES (2, 1), (4, 1), (1, 2);
+INSERT INTO likes (user_id, comment_id) VALUES (3, 1);
+```
+**Output:**
+```
+INSERT 0 3
+INSERT 0 1
+```
+
+### Break the rules
+**Two targets:**
+```sql
+INSERT INTO likes (user_id, post_id, comment_id) VALUES (1, 1, 1);
+```
+**Output:**
+```
+ERROR:  new row for relation "likes" violates check constraint "likes_exactly_one_target"
+```
+**No target:**
+```sql
+INSERT INTO likes (user_id) VALUES (1);
+```
+**Output:**
+```
+ERROR:  new row for relation "likes" violates check constraint "likes_exactly_one_target"
+```
+**The same post liked twice:**
+```sql
+INSERT INTO likes (user_id, post_id) VALUES (2, 1);
+```
+**Output:**
+```
+ERROR:  duplicate key value violates unique constraint "likes_user_post_idx"
+DETAIL:  Key (user_id, post_id)=(2, 1) already exists.
+```
+
+### Use it: likes per post
+```sql
+SELECT p.id, COUNT(l.post_id) AS likes
+FROM posts AS p
+LEFT JOIN likes AS l ON l.post_id = p.id
+GROUP BY p.id
+ORDER BY p.id;
+```
+**Output:**
+```
+ id | likes
+----+-------
+  1 |     2
+  2 |     1
+  3 |     0
+(3 rows)
+```
+`COUNT(l.post_id)` gives post 3 a `0` (topic 53).
+
+> ⚠️ **Warning:** `num_nonnulls` is PostgreSQL-specific. In another database, write the check with `CASE` or `IS NOT NULL` arithmetic (topic 115).
+
+> ⚠️ **Warning:** If you add a third likeable thing, you must alter the table, add an index, and update the check. Past three or four targets, separate tables are simpler (topic 116).
+
+> 🏆 **Golden Rule:** **Nullable foreign keys need a `CHECK` for "exactly one" and partial unique indexes for "only once."** Skip either and the table silently allows bad data.
